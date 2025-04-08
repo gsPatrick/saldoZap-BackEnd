@@ -64,8 +64,19 @@ const associateEmailWhatsAppUser = async (telefone, email) => {
     }
 };
 
+const getUserByPhone = async (telefone) => {
+    try {
+        const usuario = await Usuario.findOne({ where: { telefone } });
+        return usuario; // Retorna o usuário se encontrado, null se não
+    } catch (error) {
+        console.error("Erro ao buscar usuário por telefone:", error);
+        throw error;
+    }
+};
+
 module.exports = {
     registerWebsiteUser,
     registerWhatsAppUser,
-    associateEmailWhatsAppUser
+    associateEmailWhatsAppUser,
+    getUserByPhone 
 };

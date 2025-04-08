@@ -55,4 +55,25 @@ router.post('/whatsapp-associate-email', async (req, res) => {
     }
 });
 
+router.get('/user-by-phone/:telefone', async (req, res) => {
+    const { telefone } = req.params;
+
+    if (!telefone) {
+        return res.status(400).json({ error: "Phone number is required." });
+    }
+
+    try {
+        const usuario = await authService.getUserByPhone(telefone);
+        if (usuario) {
+            res.json(usuario); // Retorna usuário se encontrado (status 200 OK)
+        } else {
+            res.status(404).json({ message: "User not found with this phone number." }); // Retorna 404 se não encontrado
+        }
+    } catch (error) {
+        console.error("Error getting user by phone:", error);
+        res.status(500).json({ error: "Internal server error getting user by phone." });
+    }
+});
+
+
 module.exports = router;

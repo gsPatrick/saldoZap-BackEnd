@@ -39,6 +39,6 @@ app.get('/api/v1', (req, res) => {
 });
 
 
-app.listen(port, () => {
-    console.log(`API Smart-Custo rodando na porta ${port}`);
+app.listen(PORT, () => {
+    console.log(`API Smart-Custo rodando na porta ${PORT}`);
 });

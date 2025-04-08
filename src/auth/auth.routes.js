@@ -21,14 +21,14 @@ router.post('/website-register', async (req, res) => {
 });
 
 router.post('/whatsapp-register', async (req, res) => {
-    const { telefone, nome } = req.body; // <--- EXTRAI 'nome' DO BODY DA REQUISIÇÃO
+    const { telefone } = req.body;
 
     if (!telefone) {
         return res.status(400).json({ error: "Phone is required for WhatsApp registration." });
     }
 
     try {
-        const usuario = await authService.registerWhatsAppUser(telefone, nome); // <--- PASSA 'nome' PARA O SERVICE
+        const usuario = await authService.registerWhatsAppUser(telefone);
         res.status(201).json(usuario);
     } catch (error) {
         console.error("Error processing WhatsApp registration:", error);

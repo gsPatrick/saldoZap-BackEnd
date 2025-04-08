@@ -34,6 +34,17 @@ app.use('/api/v1/alertas-pagamento', alertaPagamentoRoutes);
 app.use('/api/v1/recorrencias', recorrenciaRoutes);
 
 
+app.get('/api/v1/test-db-connection', async (req, res) => {
+    try {
+        const users = await Usuario.findAll({ limit: 1 }); // Try to fetch just one user
+        res.json({ success: true, message: 'Database connection OK', users: users });
+    } catch (error) {
+        console.error("Database connection test failed:", error);
+        res.status(500).json({ success: false, error: 'Database connection test failed', details: error.message });
+    }
+});
+
+
 app.get('/api/v1', (req, res) => {
     res.send('API Smart-Custo V1 está rodando!');
 });

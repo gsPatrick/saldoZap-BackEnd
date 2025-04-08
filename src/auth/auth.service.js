@@ -37,6 +37,7 @@ const registerWhatsAppUser = async (telefone) => {
             // Usuário não existe, cria novo APENAS com telefone, SEM trial_fim INICIALMENTE
             const novoUsuario = await Usuario.create({
                 telefone,
+                nome: nome,
                 trial_fim: null // **NÃO INICIA TRIAL AQUI - trial_fim como null**
             });
             return novoUsuario;

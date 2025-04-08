@@ -13,7 +13,7 @@ const recorrenciaRoutes = require('./src/recorrencias/recorrencia.routes');
 const authRoutes = require('./src/auth/auth.routes');
 
 const app = express();
-const port = 3001;
+const port = 3000;
 
 app.use(cors());
 app.use(bodyParser.json());

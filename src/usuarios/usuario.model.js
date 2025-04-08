@@ -36,7 +36,7 @@ const Usuario = sequelize.define('Usuario', {
     field: 'assinatura_ativa'
   }
 }, {
-  tableName: 'Usuarios', // Nome da tabela no banco de dados (importante!)
+  tableName: 'usuarios', // Nome da tabela no banco de dados (importante!)
   timestamps: false       // Desativa timestamps automáticos (createdAt, updatedAt) se não usar
 });
 

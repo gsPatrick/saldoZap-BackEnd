@@ -2,6 +2,7 @@
 const express = require('express');
 const bodyParser = require('body-parser');
 const cors = require('cors');
+require('dotenv').config();
 const sequelize = require('./src/config/database');
 
 const usuarioRoutes = require('./src/usuarios/usuario.routes');
@@ -13,7 +14,7 @@ const recorrenciaRoutes = require('./src/recorrencias/recorrencia.routes');
 const authRoutes = require('./src/auth/auth.routes');
 
 const app = express();
-const port = 3000;
+const PORT = process.env.PORT || 3000;
 
 app.use(cors());
 app.use(bodyParser.json());

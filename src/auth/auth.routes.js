@@ -63,12 +63,8 @@ router.get('/user-by-phone/:telefone', async (req, res) => {
     }
 
     try {
-        const usuario = await authService.getUserByPhone(telefone);
-        if (usuario) {
-            res.json(usuario); // Retorna usuário se encontrado (status 200 OK)
-        } else {
-            res.status(404).json({ message: "User not found with this phone number." }); // Retorna 404 se não encontrado
-        }
+        const userStatus = await authService.getUserByPhone(telefone);
+        res.status(200).json(userStatus); // Always return 200 OK
     } catch (error) {
         console.error("Error getting user by phone:", error);
         res.status(500).json({ error: "Internal server error getting user by phone." });

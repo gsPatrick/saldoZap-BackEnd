@@ -12,7 +12,6 @@ const tagRoutes = require('./src/tags/tag.routes');
 const alertaPagamentoRoutes = require('./src/alertas-pagamento/alerta-pagamento.routes');
 const recorrenciaRoutes = require('./src/recorrencias/recorrencia.routes');
 const authRoutes = require('./src/auth/auth.routes');
-const alertaPagamentoRoutes = require('./src/alertas-pagamento/alerta-pagamento.routes'); 
 
 const app = express();
 const PORT = process.env.PORT || 3000;

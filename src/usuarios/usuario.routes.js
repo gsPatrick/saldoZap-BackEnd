@@ -16,6 +16,34 @@ router.post('/', async (req, res) => {
     }
 });
 
+router.get('/', async (req, res) => {
+    const { telefone } = req.query; // Pega o parâmetro 'telefone' da URL (?telefone=...)
+
+    // Se o parâmetro 'telefone' foi fornecido, busca por ele
+    if (telefone) {
+        try {
+            const usuario = await usuarioService.getUserByPhone(telefone);
+            if (usuario) {
+                // Retorna o usuário encontrado (dentro de um array, como N8N pode esperar)
+                res.json([usuario]);
+            } else {
+                // Retorna um array vazio se não encontrar, para N8N não falhar
+                res.json([]);
+            }
+        } catch (error) {
+            console.error("Erro na rota GET /usuarios por telefone:", error);
+            res.status(500).json({ error: "Internal server error getting user by phone." });
+        }
+    } else {
+        // Opcional: Se nenhum filtro for passado, você pode:
+        // 1. Listar todos os usuários (precisaria criar a função no service)
+        // 2. Retornar um erro 400 Bad Request pedindo um filtro
+        // 3. Retornar um array vazio
+        // Exemplo: Retornando erro 400
+        res.status(400).json({ error: "User search requires a filter (e.g., ?telefone=...)." });
+    }
+});
+
 router.get('/:id_usuario', async (req, res) => {
     const { id_usuario } = req.params;
 

@@ -1,9 +1,14 @@
 // src/recorrencias/recorrencia.service.js
 const Recorrencia = require('./recorrencia.model');
+const Usuario = require('../usuarios/usuario.model'); // Para includes futuros, se necessário
 
-const createRecurrence = async (id_usuario, tipo, valor, id_categoria, origem, data_inicio, frequencia, dia_mes, dia_semana, intervalo, data_fim_recorrencia, descricao) => {
+// Assinatura modificada: id_categoria -> nome_categoria
+const createRecurrence = async (id_usuario, tipo, valor, nome_categoria, origem, data_inicio, frequencia, dia_mes, dia_semana, intervalo, data_fim_recorrencia, descricao) => {
     try {
-        const recorrencia = await Recorrencia.create({ id_usuario, tipo, valor, id_categoria, origem, data_inicio, frequencia, dia_mes, dia_semana, intervalo, data_fim_recorrencia, descricao });
+        // Objeto de criação modificado: id_categoria -> nome_categoria
+        const recorrencia = await Recorrencia.create({
+            id_usuario, tipo, valor, nome_categoria, origem, data_inicio, frequencia, dia_mes, dia_semana, intervalo, data_fim_recorrencia, descricao
+        });
         return recorrencia;
     } catch (error) {
         console.error("Erro ao criar recorrência:", error);
@@ -13,7 +18,9 @@ const createRecurrence = async (id_usuario, tipo, valor, id_categoria, origem, d
 
 const getRecurrenceById = async (id_recorrencia) => {
     try {
-        const recorrencia = await Recorrencia.findByPk(id_recorrencia);
+        const recorrencia = await Recorrencia.findByPk(id_recorrencia, {
+            include: [{ model: Usuario, as: 'usuario' }] // Exemplo
+        });
         return recorrencia;
     } catch (error) {
         console.error("Erro ao obter recorrência:", error);
@@ -24,7 +31,8 @@ const getRecurrenceById = async (id_recorrencia) => {
 const listRecurrences = async (id_usuario) => {
     try {
         const recorrencias = await Recorrencia.findAll({
-            where: { id_usuario }
+            where: { id_usuario },
+            include: [{ model: Usuario, as: 'usuario' }] // Exemplo
         });
         return recorrencias;
     } catch (error) {
@@ -39,6 +47,8 @@ const updateRecurrence = async (id_recorrencia, updates) => {
         if (!recorrencia) {
             return null;
         }
+         // Garante que não tentem atualizar id_categoria que não existe mais
+        delete updates.id_categoria;
         await recorrencia.update(updates);
         return recorrencia;
     } catch (error) {
@@ -52,7 +62,7 @@ const deleteRecurrence = async (id_recorrencia) => {
         const recorrenciaDeletada = await Recorrencia.destroy({
             where: { id_recorrencia }
         });
-        return recorrenciaDeletada > 0;
+        return recorrenciaDeletada > 0; // Retorna true se 1 ou mais linhas foram deletadas
     } catch (error) {
         console.error("Erro ao deletar recorrência:", error);
         throw error;

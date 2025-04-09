@@ -1,10 +1,15 @@
+// src/transacoes/transacao.service.js
 const Transacao = require('./transacao.model');
-const Sequelize = require('sequelize');
+const sequelize = require('../config/database'); // Necessário para query bruta do balance
+const { Sequelize } = require('sequelize'); // Necessário para Sequelize.Op e QueryTypes
+const Usuario = require('../usuarios/usuario.model'); // Necessário para include em algumas consultas futuras, se houver
 
-const createTransaction = async (id_usuario, tipo, valor, id_categoria, data_transacao, codigo_unico, descricao, comprovante_url, id_transacao_pai, parcela_numero, total_parcelas) => {
+// Assinatura modificada: id_categoria -> nome_categoria
+const createTransaction = async (id_usuario, tipo, valor, nome_categoria, data_transacao, codigo_unico, descricao, comprovante_url, id_transacao_pai, parcela_numero, total_parcelas) => {
     try {
+        // Objeto de criação modificado: id_categoria -> nome_categoria
         const novaTransacao = await Transacao.create({
-            id_usuario, tipo, valor, id_categoria, data_transacao, codigo_unico, descricao, comprovante_url, id_transacao_pai, parcela_numero, total_parcelas
+            id_usuario, tipo, valor, nome_categoria, data_transacao, codigo_unico, descricao, comprovante_url, id_transacao_pai, parcela_numero, total_parcelas
         });
         return novaTransacao;
     } catch (error) {
@@ -16,15 +21,19 @@ const createTransaction = async (id_usuario, tipo, valor, id_categoria, data_tra
 const listTransactions = async (id_usuario, filtroPeriodo) => {
     const whereClause = { id_usuario };
 
+    // Ajuste do filtro de período para usar data_transacao
     if (filtroPeriodo) {
+        // Assumindo que filtroPeriodo é uma data YYYY-MM-DD de início
+        // Se for 'mes_atual', etc., precisa converter para data antes daqui
         whereClause.data_transacao = { [Sequelize.Op.gte]: filtroPeriodo };
     }
 
     try {
         const transacoes = await Transacao.findAll({
             where: whereClause,
-            include: [{ all: true }],
-            order: [['data_transacao', 'DESC']] // Order by date, newest first for extract
+            // include: [{ all: true }], // REMOVIDO - Evita tentar incluir Categoria que não existe mais
+            include: [{ model: Usuario, as: 'usuario' }], // Exemplo: Incluir usuário se necessário
+            order: [['data_transacao', 'DESC']]
         });
         return transacoes;
     } catch (error) {
@@ -36,7 +45,8 @@ const listTransactions = async (id_usuario, filtroPeriodo) => {
 const getTransactionById = async (id_transacao) => {
     try {
         const transacao = await Transacao.findByPk(id_transacao, {
-            include: [{ all: true }]
+            // include: [{ all: true }] // REMOVIDO
+            include: [{ model: Usuario, as: 'usuario' }] // Exemplo
         });
         return transacao;
     } catch (error) {
@@ -51,6 +61,8 @@ const updateTransaction = async (id_transacao, updates) => {
         if (!transacao) {
             return null;
         }
+        // Garante que não tentem atualizar id_categoria que não existe mais
+        delete updates.id_categoria;
         await transacao.update(updates);
         return transacao;
     } catch (error) {
@@ -73,51 +85,60 @@ const deleteTransaction = async (id_transacao) => {
 
 const getCurrentBalance = async (id_usuario) => {
     try {
+        // A query bruta precisa usar o nome correto da tabela (transacoes)
         const [results] = await sequelize.query(`
             SELECT
                 SUM(CASE WHEN tipo = 'receita' THEN valor ELSE 0 END) - SUM(CASE WHEN tipo = 'despesa' THEN valor ELSE 0 END) as balance
-            FROM Transacoes
+            FROM transacoes
             WHERE id_usuario = :id_usuario
         `, {
             replacements: { id_usuario },
             type: Sequelize.QueryTypes.SELECT
         });
-        return results && results.balance ? parseFloat(results.balance) : 0;
+        // Use parseFloat para garantir que é número
+        return results && results.balance !== null ? parseFloat(results.balance) : 0;
     } catch (error) {
         console.error("Erro ao obter saldo atual:", error);
         throw error;
     }
 };
 
+
 const getMonthlySummary = async (id_usuario, year, month) => {
     try {
-        const startDate = new Date(year, month - 1, 1); // Month is 1-indexed in params, 0-indexed in Date
-        const endDate = new Date(year, month, 0, 23, 59, 59, 999); // Last day of the month
+        const startDate = new Date(year, month - 1, 1);
+        const endDate = new Date(year, month, 1); // Próximo mês, dia 1 (Op.lt é exclusivo)
+        endDate.setMilliseconds(endDate.getMilliseconds() -1); // Último ms do mês
 
         const transacoes = await Transacao.findAll({
             where: {
                 id_usuario: id_usuario,
                 data_transacao: {
-                    [Sequelize.Op.between]: [startDate, endDate]
+                    [Sequelize.Op.gte]: startDate,
+                    [Sequelize.Op.lte]: endDate // Usar lte com a data/hora exata do fim do mês
                 }
-            },
-            include: [{ model: Categoria, as: 'categoria' }] // Include category for grouping
+            }
+            // REMOVIDO include de Categoria
         });
 
         let summary = {
             totalIncome: 0,
             totalExpenses: 0,
-            categorySummary: {}
+            categorySummary: {} // Continuará a agrupar pelo nome
         };
 
         transacoes.forEach(transacao => {
+            // Garantir que valor seja número
+            const valorNum = parseFloat(transacao.valor) || 0;
+
             if (transacao.tipo === 'receita') {
-                summary.totalIncome += parseFloat(transacao.valor);
+                summary.totalIncome += valorNum;
             } else {
-                summary.totalExpenses += parseFloat(transacao.valor);
+                summary.totalExpenses += valorNum;
             }
-            const categoryName = transacao.categoria ? transacao.categoria.nome_categoria : 'Sem Categoria'; // Handle no category case
-            summary.categorySummary[categoryName] = (summary.categorySummary[categoryName] || 0) + parseFloat(transacao.valor);
+            // Usar o campo nome_categoria diretamente
+            const categoryName = transacao.nome_categoria || 'Sem Categoria';
+            summary.categorySummary[categoryName] = (summary.categorySummary[categoryName] || 0) + valorNum;
         });
 
         return summary;
@@ -129,7 +150,6 @@ const getMonthlySummary = async (id_usuario, year, month) => {
 
 const getDailySummary = async (id_usuario, year, month, day) => {
     try {
-        const date = new Date(year, month - 1, day); // Month is 1-indexed in params, 0-indexed in Date
         const startOfDay = new Date(year, month - 1, day, 0, 0, 0, 0);
         const endOfDay = new Date(year, month - 1, day, 23, 59, 59, 999);
 
@@ -140,19 +160,21 @@ const getDailySummary = async (id_usuario, year, month, day) => {
                     [Sequelize.Op.between]: [startOfDay, endOfDay]
                 }
             }
+            // Não precisa de include aqui
         });
 
         let dailySummary = {
             totalIncome: 0,
             totalExpenses: 0,
-            transactions: transacoes // Optionally include transactions in daily summary
+            transactions: transacoes
         };
 
         transacoes.forEach(transacao => {
+            const valorNum = parseFloat(transacao.valor) || 0;
             if (transacao.tipo === 'receita') {
-                dailySummary.totalIncome += parseFloat(transacao.valor);
+                dailySummary.totalIncome += valorNum;
             } else {
-                dailySummary.totalExpenses += parseFloat(transacao.valor);
+                dailySummary.totalExpenses += valorNum;
             }
         });
 
@@ -166,18 +188,18 @@ const getDailySummary = async (id_usuario, year, month, day) => {
 
 const getWeeklySummary = async (id_usuario, year, week) => {
     try {
-        const firstDayOfYear = new Date(year, 0, 1); // January 1st of the year
-        const dayOfYear = (week - 1) * 7 + 1; // Approximate day of year for the start of the week
-        const startDate = new Date(year, 0, dayOfYear); // Start of the week (approximately)
-
-        // Adjust startDate to be the actual start of the week (Monday)
-        const dayOfWeek = startDate.getDay(); // 0=Sunday, 1=Monday, ..., 6=Saturday
-        const daysToSubtract = dayOfWeek === 0 ? 6 : dayOfWeek - 1; // Adjust for Sunday being 0
+        // Lógica para calcular start e end date da semana (mantida)
+        const firstDayOfYear = new Date(year, 0, 1);
+        const dayOfYear = (week - 1) * 7 + 1;
+        const startDate = new Date(year, 0, dayOfYear);
+        const dayOfWeek = startDate.getDay();
+        const daysToSubtract = dayOfWeek === 0 ? 6 : dayOfWeek - 1;
         startDate.setDate(startDate.getDate() - daysToSubtract);
+        startDate.setHours(0,0,0,0); // Garante início do dia
 
         const endDate = new Date(startDate);
-        endDate.setDate(endDate.getDate() + 6); // End of the week (Sunday)
-        endDate.setHours(23, 59, 59, 999);
+        endDate.setDate(endDate.getDate() + 6);
+        endDate.setHours(23, 59, 59, 999); // Garante fim do dia
 
 
         const transacoes = await Transacao.findAll({
@@ -192,15 +214,16 @@ const getWeeklySummary = async (id_usuario, year, week) => {
         let weeklySummary = {
             totalIncome: 0,
             totalExpenses: 0,
-            startDate: startDate,
-            endDate: endDate
+            startDate: startDate.toISOString().split('T')[0], // Formatar data
+            endDate: endDate.toISOString().split('T')[0]   // Formatar data
         };
 
         transacoes.forEach(transacao => {
+             const valorNum = parseFloat(transacao.valor) || 0;
             if (transacao.tipo === 'receita') {
-                weeklySummary.totalIncome += parseFloat(transacao.valor);
+                weeklySummary.totalIncome += valorNum;
             } else {
-                weeklySummary.totalExpenses += parseFloat(transacao.valor);
+                weeklySummary.totalExpenses += valorNum;
             }
         });
         return weeklySummary;
@@ -213,25 +236,36 @@ const getWeeklySummary = async (id_usuario, year, week) => {
 
 const getSpendingByCategory = async (id_usuario, startDate, endDate) => {
     try {
+        // Garante que endDate inclua o dia inteiro
+        const endOfDayEndDate = new Date(endDate);
+        endOfDayEndDate.setHours(23, 59, 59, 999);
+
         const transacoes = await Transacao.findAll({
             where: {
                 id_usuario: id_usuario,
                 tipo: 'despesa',
                 data_transacao: {
-                    [Sequelize.Op.between]: [startDate, endDate]
+                    // Usar gte e lte para clareza com datas
+                    [Sequelize.Op.gte]: startDate,
+                    [Sequelize.Op.lte]: endOfDayEndDate
                 }
-            },
-            include: [{ model: Categoria, as: 'categoria' }] // Include category for grouping
+            }
+            // REMOVIDO include de Categoria
         });
 
         let categorySpending = {};
 
         transacoes.forEach(transacao => {
-            const categoryName = transacao.categoria ? transacao.categoria.nome_categoria : 'Sem Categoria';
-            categorySpending[categoryName] = (categorySpending[categoryName] || 0) + parseFloat(transacao.valor);
+            // Usar nome_categoria diretamente
+            const categoryName = transacao.nome_categoria || 'Sem Categoria';
+            const valorNum = parseFloat(transacao.valor) || 0;
+            categorySpending[categoryName] = (categorySpending[categoryName] || 0) + valorNum;
         });
 
-        return categorySpending;
+        // Formatar para array de objetos se preferir {nome: 'Cat', total: 100}
+        const formattedSpending = Object.entries(categorySpending).map(([nome, total]) => ({ nome, total }));
+
+        return formattedSpending; // Retorna array formatado
 
     } catch (error) {
         console.error("Erro ao obter gastos por categoria:", error);
@@ -242,15 +276,20 @@ const getSpendingByCategory = async (id_usuario, startDate, endDate) => {
 
 const getTransactionStatement = async (id_usuario, startDate, endDate) => {
     try {
+         // Garante que endDate inclua o dia inteiro
+        const endOfDayEndDate = new Date(endDate);
+        endOfDayEndDate.setHours(23, 59, 59, 999);
+
         const transacoes = await Transacao.findAll({
             where: {
                 id_usuario: id_usuario,
                 data_transacao: {
-                    [Sequelize.Op.between]: [startDate, endDate]
+                    [Sequelize.Op.gte]: startDate,
+                    [Sequelize.Op.lte]: endOfDayEndDate
                 }
             },
-            include: [{ model: Categoria, as: 'categoria' }],
-            order: [['data_transacao', 'ASC']] // Order by date for statement
+            // REMOVIDO include de Categoria
+            order: [['data_transacao', 'ASC']] // Mantém ordenação
         });
         return transacoes;
 

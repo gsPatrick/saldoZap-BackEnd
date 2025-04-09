@@ -12,6 +12,7 @@ const tagRoutes = require('./src/tags/tag.routes');
 const alertaPagamentoRoutes = require('./src/alertas-pagamento/alerta-pagamento.routes');
 const recorrenciaRoutes = require('./src/recorrencias/recorrencia.routes');
 const authRoutes = require('./src/auth/auth.routes');
+const alertaPagamentoRoutes = require('./src/alertas-pagamento/alerta-pagamento.routes'); 
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -32,6 +33,7 @@ app.use('/api/v1/categorias', categoriaRoutes);
 app.use('/api/v1/tags', tagRoutes);
 app.use('/api/v1/alertas-pagamento', alertaPagamentoRoutes);
 app.use('/api/v1/recorrencias', recorrenciaRoutes);
+app.use('/api/v1/alertas', alertaPagamentoRoutes); 
 
 
 app.get('/api/v1/test-db-connection', async (req, res) => {

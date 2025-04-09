@@ -18,21 +18,25 @@ const createTransaction = async (id_usuario, tipo, valor, nome_categoria, data_t
     }
 };
 
-const listTransactions = async (id_usuario, filtroPeriodo) => {
+const listTransactions = async (id_usuario, filtroPeriodo, tipoFiltro) => {
     const whereClause = { id_usuario };
 
-    // Ajuste do filtro de período para usar data_transacao
     if (filtroPeriodo) {
-        // Assumindo que filtroPeriodo é uma data YYYY-MM-DD de início
-        // Se for 'mes_atual', etc., precisa converter para data antes daqui
-        whereClause.data_transacao = { [Sequelize.Op.gte]: filtroPeriodo };
+        const startDateCalculada = calcularStartDate(filtroPeriodo); // Usando a função helper da resposta anterior
+        if (startDateCalculada instanceof Date && !isNaN(startDateCalculada)) {
+            whereClause.data_transacao = { [Sequelize.Op.gte]: startDateCalculada };
+        }
+    }
+
+    // Adiciona o filtro de tipo SE ele for fornecido
+    if (tipoFiltro && (tipoFiltro === 'receita' || tipoFiltro === 'despesa')) {
+        whereClause.tipo = tipoFiltro;
     }
 
     try {
         const transacoes = await Transacao.findAll({
-            where: whereClause,
-            // include: [{ all: true }], // REMOVIDO - Evita tentar incluir Categoria que não existe mais
-            include: [{ model: Usuario, as: 'usuario' }], // Exemplo: Incluir usuário se necessário
+            where: whereClause, // whereClause agora pode incluir o tipo
+            include: [{ model: Usuario, as: 'usuario' }],
             order: [['data_transacao', 'DESC']]
         });
         return transacoes;

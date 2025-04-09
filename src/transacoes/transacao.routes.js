@@ -30,18 +30,16 @@ router.post('/', async (req, res) => {
 
 // Rota GET / com filtro por nome_categoria (ADICIONAL OPCIONAL)
 router.get('/', async (req, res) => {
-    // Adicionado nome_categoria ao destructuring dos query params
-    const { id_usuario, periodo, nome_categoria } = req.query;
+    // Adiciona 'tipo' ao destructuring
+    const { id_usuario, periodo, tipo } = req.query;
 
     if (!id_usuario) {
         return res.status(400).json({ error: "User ID (id_usuario) is required to list transactions." });
     }
 
     try {
-        // Passa o nome_categoria para o serviço (você precisará adaptar o serviço listTransactions para usar isso)
-        // Por enquanto, o serviço não usa nome_categoria no filtro principal.
-        // Se quiser filtrar, precisará adicionar lógica em listTransactions.
-        const transacoes = await transacaoService.listTransactions(id_usuario, periodo /*, nome_categoria */);
+        // Passa o 'tipo' para o serviço
+        const transacoes = await transacaoService.listTransactions(parseInt(id_usuario), periodo, tipo);
         res.json(transacoes);
     } catch (error) {
         console.error("Erro na rota GET /transacoes:", error);

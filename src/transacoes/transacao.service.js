@@ -5,6 +5,71 @@ const { Sequelize } = require('sequelize'); // Necessário para Sequelize.Op e Q
 const Usuario = require('../usuarios/usuario.model'); // Necessário para include em algumas consultas futuras, se houver
 
 // Assinatura modificada: id_categoria -> nome_categoria
+
+function calcularStartDate(periodoInput) {
+    let startDate = null;
+    const hoje = new Date();
+    hoje.setHours(0, 0, 0, 0);
+
+    if (!periodoInput) {
+        startDate = new Date(hoje.getFullYear(), hoje.getMonth(), 1);
+        console.warn("[API LOG] Período não fornecido para calcularStartDate, usando início do mês."); // Log adicionado
+        return startDate;
+    }
+
+    try {
+        switch (periodoInput.toLowerCase()) {
+            case 'mes_atual':
+                startDate = new Date(hoje.getFullYear(), hoje.getMonth(), 1);
+                break;
+            case 'hoje':
+                startDate = hoje;
+                break;
+            case 'ontem':
+                startDate = new Date(hoje);
+                startDate.setDate(hoje.getDate() - 1);
+                break;
+            case 'semana_atual':
+                startDate = new Date(hoje);
+                const diaSemana = hoje.getDay();
+                const diff = hoje.getDate() - diaSemana + (diaSemana === 0 ? -6 : 1);
+                startDate.setDate(diff);
+                break;
+            case 'semana_passada':
+                startDate = new Date(hoje);
+                const diaSemanaPassada = hoje.getDay();
+                const diffPassada = hoje.getDate() - diaSemanaPassada - 6;
+                startDate.setDate(diffPassada);
+                break;
+            default:
+                if (/^\d{4}-\d{2}-\d{2}$/.test(periodoInput)) {
+                    startDate = new Date(Date.UTC(
+                        parseInt(periodoInput.substring(0, 4)),
+                        parseInt(periodoInput.substring(5, 7)) - 1,
+                        parseInt(periodoInput.substring(8, 10))
+                    ));
+                } else {
+                    console.warn(`[API LOG] Período não reconhecido em calcularStartDate: ${periodoInput}. Usando início do mês.`); // Log adicionado
+                    startDate = new Date(hoje.getFullYear(), hoje.getMonth(), 1);
+                }
+                break;
+        }
+
+        if (!(startDate instanceof Date && !isNaN(startDate))) {
+            console.error(`[API LOG] Data Inválida calculada para período "${periodoInput}". Usando início do mês.`); // Log adicionado
+            startDate = new Date(hoje.getFullYear(), hoje.getMonth(), 1);
+        }
+
+    } catch(dateError){
+         console.error(`[API LOG] Erro em calcularStartDate para período "${periodoInput}":`, dateError, "Usando início do mês."); // Log adicionado
+         startDate = new Date(hoje.getFullYear(), hoje.getMonth(), 1);
+    }
+
+    console.log(`[API LOG] calcularStartDate para "${periodoInput}" resultou em: ${startDate?.toISOString()}`); // Log adicionado
+    return startDate;
+}
+
+
 const createTransaction = async (id_usuario, tipo, valor, nome_categoria, data_transacao, codigo_unico, descricao, comprovante_url, id_transacao_pai, parcela_numero, total_parcelas) => {
     try {
         // Objeto de criação modificado: id_categoria -> nome_categoria

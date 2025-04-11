@@ -6,27 +6,25 @@ const router = express.Router();
 
 // Rota POST modificada: id_categoria -> nome_categoria
 router.post('/', async (req, res) => {
-    // Destructuring modificado
-    const { id_usuario, tipo, valor, nome_categoria, data_transacao, codigo_unico, descricao, comprovante_url, id_transacao_pai, parcela_numero, total_parcelas } = req.body;
+    // REMOVER codigo_unico do destructuring
+    const { id_usuario, tipo, valor, nome_categoria, data_transacao, /* REMOVIDO codigo_unico,*/ descricao, comprovante_url, id_transacao_pai, parcela_numero, total_parcelas } = req.body;
 
-    // Validação básica (adapte conforme necessário)
     if (!id_usuario || !tipo || !valor || !data_transacao) {
          return res.status(400).json({ error: "Missing required fields for transaction." });
     }
-    // Se codigo_unico voltou a ser obrigatório no modelo, valide aqui também.
 
     try {
-        // Chamada de serviço modificada
+        // Chamada de serviço SEM passar codigo_unico
         const novaTransacao = await transacaoService.createTransaction(
-            id_usuario, tipo, valor, nome_categoria, data_transacao, codigo_unico, descricao, comprovante_url, id_transacao_pai, parcela_numero, total_parcelas
+            id_usuario, tipo, valor, nome_categoria, data_transacao, /* REMOVIDO */ descricao, comprovante_url, id_transacao_pai, parcela_numero, total_parcelas
         );
-        res.status(201).json(novaTransacao);
+        // A resposta já contém o código gerado
+        res.status(201).json(novaTransacao); 
     } catch (error) {
-        // Evitar expor detalhes do erro interno, logar e retornar genérico
         console.error("Erro na rota POST /transacoes:", error);
         res.status(500).json({ error: "Internal server error creating transaction." });
     }
-});
+})
 
 // Rota GET / com filtro por nome_categoria (ADICIONAL OPCIONAL)
 router.get('/', async (req, res) => {
@@ -45,7 +43,7 @@ router.get('/', async (req, res) => {
         console.error("Erro na rota GET /transacoes:", error);
         res.status(500).json({ error: "Internal server error listing transactions." });
     }
-});
+}); 
 
 router.get('/:id_transacao', async (req, res) => {
     const { id_transacao } = req.params;
@@ -205,6 +203,35 @@ router.get('/statement/:id_usuario', async (req, res) => {
     } catch (error) {
         console.error("Erro ao obter extrato de transações:", error);
         res.status(500).json({ error: "Internal server error getting transaction statement." });
+    }
+});
+
+
+router.delete('/by-code/:codigo_unico', async (req, res) => {
+    const { codigo_unico } = req.params;
+    // ASSUMINDO que você tem o ID do usuário logado disponível em req.user.id_usuario
+    // Adapte conforme sua autenticação. Se não tiver, PRECISA implementar um jeito de pegar o id_usuario.
+    const id_usuario = req.user?.id_usuario; 
+
+    if (!id_usuario) {
+         return res.status(401).json({ error: "User authentication required." });
+    }
+    if (!codigo_unico) {
+        return res.status(400).json({ error: "Missing codigo_unico parameter." });
+    }
+
+    try {
+        // Passa id_usuario para o service por segurança
+        const sucesso = await transacaoService.deleteTransactionByCode(codigo_unico, id_usuario); 
+        if (sucesso) {
+            res.status(204).send(); // Sucesso, sem conteúdo
+        } else {
+            // IMPORTANTE: Retorna 404 aqui, o N8N vai usar isso
+            res.status(404).json({ message: "Transaction with this code not found for this user." });
+        }
+    } catch (error) {
+        console.error(`Erro na rota DELETE /transacoes/by-code/${codigo_unico}:`, error);
+        res.status(500).json({ error: "Internal server error deleting transaction by code." });
     }
 });
 

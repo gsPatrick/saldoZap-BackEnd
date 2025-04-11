@@ -4,14 +4,50 @@ const alertaPagamentoService = require('./alerta-pagamento.service');
 const router = express.Router();
 
 router.post('/', async (req, res) => {
-    const { id_usuario, valor, data_vencimento, descricao, codigo_unico, status } = req.body;
+    // REMOVER codigo_unico do destructuring
+    const { id_usuario, valor, data_vencimento, descricao, /* REMOVIDO codigo_unico,*/ status } = req.body;
+
+     // Adicione validações se necessário (valor, data_vencimento)
+    if (!id_usuario || !valor || !data_vencimento) {
+         return res.status(400).json({ error: "Missing required fields for payment alert." });
+    }
 
     try {
-        const alertaPagamento = await alertaPagamentoService.createPaymentAlert(id_usuario, valor, data_vencimento, descricao, codigo_unico, status);
-        res.status(201).json(alertaPagamento);
+        // Chamada de serviço SEM passar codigo_unico
+        const alertaPagamento = await alertaPagamentoService.createPaymentAlert(
+            id_usuario, valor, data_vencimento, descricao, /* REMOVIDO */ status
+        );
+        // A resposta já contém o código gerado
+        res.status(201).json(alertaPagamento); 
     } catch (error) {
         console.error("Erro ao criar alerta de pagamento:", error);
         res.status(500).json({ error: "Internal server error creating payment alert." });
+    }
+});
+
+router.put('/by-code/:codigo_unico/status', async (req, res) => {
+    const { codigo_unico } = req.params;
+    const { status } = req.body; // Espera { "status": "pago" } ou { "status": "cancelado" }
+    const id_usuario = req.user?.id_usuario; // <<< Obtenha o ID do usuário autenticado
+
+    if (!id_usuario) {
+        return res.status(401).json({ error: "User authentication required." });
+    }
+    if (!codigo_unico || !status || !['pago', 'cancelado', 'pendente'].includes(status)) {
+         return res.status(400).json({ error: "Missing or invalid codigo_unico or status." });
+    }
+
+    try {
+        const result = await alertaPagamentoService.updateStatusByCode(codigo_unico, id_usuario, status);
+
+        if (result.success) {
+            res.status(result.status).json(result.data); // 200 OK com o alerta atualizado
+        } else {
+            res.status(result.status).json({ message: result.message }); // 404 ou 400
+        }
+    } catch (error) {
+         console.error(`Erro na rota PUT /alertas-pagamento/by-code/${codigo_unico}/status:`, error);
+         res.status(500).json({ error: "Internal server error updating alert status." });
     }
 });
 
@@ -88,5 +124,33 @@ router.get('/upcoming/:id_usuario', async (req, res) => {
     }
 });
 
+
+// Nova rota para deletar por codigo_unico
+router.delete('/by-code/:codigo_unico', async (req, res) => {
+    const { codigo_unico } = req.params;
+    // ASSUMINDO req.user.id_usuario - Adapte!
+    const id_usuario = req.user?.id_usuario; 
+
+     if (!id_usuario) {
+         return res.status(401).json({ error: "User authentication required." });
+    }
+     if (!codigo_unico) {
+        return res.status(400).json({ error: "Missing codigo_unico parameter." });
+    }
+
+    try {
+         // Passa id_usuario para o service
+        const sucesso = await alertaPagamentoService.deletePaymentAlertByCode(codigo_unico, id_usuario);
+        if (sucesso) {
+            res.status(204).send(); // Sucesso
+        } else {
+            // IMPORTANTE: Retorna 404
+            res.status(404).json({ message: "Payment alert with this code not found for this user." });
+        }
+    } catch (error) {
+        console.error(`Erro na rota DELETE /alertas-pagamento/by-code/${codigo_unico}:`, error);
+        res.status(500).json({ error: "Internal server error deleting payment alert by code." });
+    }
+});
 
 module.exports = router;

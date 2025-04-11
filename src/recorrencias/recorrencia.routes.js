@@ -56,6 +56,29 @@ router.get('/', async (req, res) => {
     }
 });
 
+router.delete('/:id_recorrencia', async (req, res) => {
+    const { id_recorrencia } = req.params;
+    const id_usuario = req.user?.id_usuario; // <<< Obtenha o ID do usuário
+
+    if (isNaN(parseInt(id_recorrencia))) return res.status(400).json({ error: "Invalid recurrence ID format." });
+    if (!id_usuario) {
+        return res.status(401).json({ error: "User authentication required." });
+    }
+
+    try {
+        // Passa o id_usuario para o service
+        const sucesso = await recorrenciaService.deleteRecurrence(parseInt(id_recorrencia), id_usuario);
+        if (sucesso) {
+            res.status(204).send();
+        } else {
+            res.status(404).json({ message: "Recurrence not found for deletion or does not belong to user." });
+        }
+    } catch (error) {
+        console.error(`Erro na rota DELETE /recorrencias/${id_recorrencia}:`, error);
+        res.status(500).json({ error: "Internal server error deleting recurrence." });
+    }
+});
+
 // Rota PUT modificada para não aceitar id_categoria
 router.put('/:id_recorrencia', async (req, res) => {
     const { id_recorrencia } = req.params;

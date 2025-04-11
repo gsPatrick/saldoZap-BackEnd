@@ -1,55 +1,47 @@
 // src/alertas-pagamento/alerta-pagamento.service.js
 const AlertaPagamento = require('./alerta-pagamento.model');
 const transacaoService = require('../transacoes/transacao.service'); // Importar TransactionService
-const { Sequelize } = require('sequelize'); // Para Op, se necessário
+const { Sequelize, Op } = require('sequelize'); // Importar Op do Sequelize
 const { nanoid } = require('nanoid'); // Para gerar código único
 
 // --- Função Helper para Gerar Código Único de Alerta ---
+// (Esta função não é mais necessária se o hook beforeValidate no modelo funciona)
+/*
 const generateUniqueAlertCode = async () => {
     let code;
     let existing = true;
     while (existing) {
-        // Gera um código com prefixo e 7 caracteres aleatórios
         code = `ALT-${nanoid(7)}`;
-        existing = await AlertaPagamento.findOne({ where: { codigo_unico: code }, paranoid: false }); // paranoid: false se usar soft delete
+        existing = await AlertaPagamento.findOne({ where: { codigo_unico: code }, paranoid: false });
     }
     return code;
 };
+*/
 // ---------------------------------------------------------
 
 /**
  * Cria um novo alerta de pagamento.
- * O codigo_unico é gerado automaticamente.
+ * O codigo_unico é gerado automaticamente via hook do modelo.
  * @param {object} dadosAlerta - Objeto contendo os dados do alerta.
- * @param {number} dadosAlerta.id_usuario - ID do usuário.
- * @param {number} dadosAlerta.valor - Valor do alerta.
- * @param {string} dadosAlerta.data_vencimento - Data de vencimento (YYYY-MM-DD).
- * @param {string} dadosAlerta.tipo - 'despesa' ou 'receita'.
- * @param {string} [dadosAlerta.descricao] - Descrição opcional.
- * @param {string} [dadosAlerta.status='pendente'] - Status inicial.
- * @param {number} [dadosAlerta.id_recorrencia_pai] - ID da recorrência pai (opcional).
- * @param {string} [dadosAlerta.nome_categoria] - Nome da categoria (opcional).
  * @returns {Promise<AlertaPagamento>} O alerta criado.
  */
 const createPaymentAlert = async (dadosAlerta) => {
     try {
-        // Gera o código único ANTES de criar (garantido pelo hook, mas pode gerar aqui também se preferir)
-        // const codigo_unico_gerado = await generateUniqueAlertCode(); // O hook beforeValidate já faz isso
-
         // Garante um status padrão se não for fornecido
         const statusFinal = dadosAlerta.status || 'pendente';
 
         const alertaPagamento = await AlertaPagamento.create({
             ...dadosAlerta, // Inclui id_usuario, valor, data_vencimento, tipo, etc.
             status: statusFinal,
-            // codigo_unico: codigo_unico_gerado // O hook beforeValidate cuida disso
+            // codigo_unico será gerado pelo hook beforeValidate
         });
         // Recarrega para garantir que o código único gerado pelo hook esteja presente
-        await alertaPagamento.reload();
+        // (Opcional, create já retorna o objeto completo geralmente)
+        // await alertaPagamento.reload();
         return alertaPagamento;
     } catch (error) {
         console.error("Erro ao criar alerta de pagamento:", error);
-        if (error.name === 'SequelizeUniqueConstraintError') {
+        if (error.name === 'SequelizeUniqueConstraintError' && error.fields?.codigo_unico) {
             console.error("Colisão de código único de alerta detectada (raro).");
         }
         throw error; // Re-lança o erro para ser tratado pela rota
@@ -63,6 +55,7 @@ const createPaymentAlert = async (dadosAlerta) => {
  */
 const getPaymentAlertById = async (id_alerta) => {
     try {
+        // Usar findByPk é otimizado para busca por chave primária
         const alertaPagamento = await AlertaPagamento.findByPk(id_alerta);
         return alertaPagamento;
     } catch (error) {
@@ -72,30 +65,50 @@ const getPaymentAlertById = async (id_alerta) => {
 };
 
 /**
- * Lista alertas de pagamento com base em filtros.
- * @param {object} filters - Objeto de filtros (ex: { id_usuario: 1, status: 'pendente' }).
+ * Lista alertas de pagamento com base em filtros complexos da query string.
+ * @param {object} queryParams - Objeto contendo os parâmetros da query (req.query).
  * @returns {Promise<AlertaPagamento[]>} Lista de alertas encontrados.
  */
-const listPaymentAlerts = async (filters = {}) => {
+const listPaymentAlerts = async (queryParams = {}) => {
     try {
-        // Adicionar filtros comuns como data_vencimento range se necessário
-        const whereClause = { ...filters };
+        const whereClause = {};
+        const dateFilters = {};
 
-        // Exemplo de como adicionar filtro de data range se viesse nos filters
-        if (filters.data_vencimento_inicio && filters.data_vencimento_fim) {
-             whereClause.data_vencimento = {
-                 [Sequelize.Op.between]: [filters.data_vencimento_inicio, filters.data_vencimento_fim]
-             };
-             delete filters.data_vencimento_inicio; // Remover do where principal
-             delete filters.data_vencimento_fim;
-        } else if (filters.data_vencimento_gte) {
-             whereClause.data_vencimento = { [Sequelize.Op.gte]: filters.data_vencimento_gte };
-             delete filters.data_vencimento_gte;
-        } else if (filters.data_vencimento_lte) {
-            whereClause.data_vencimento = { [Sequelize.Op.lte]: filters.data_vencimento_lte };
-            delete filters.data_vencimento_lte;
+        // Itera sobre os parâmetros recebidos da rota
+        for (const key in queryParams) {
+            if (Object.hasOwnProperty.call(queryParams, key)) {
+                const value = queryParams[key];
+
+                // Tratamento específico para filtros de data com operadores
+                if (key === 'data_vencimento[gte]') {
+                    dateFilters[Op.gte] = value; // Usa Op.gte do Sequelize
+                } else if (key === 'data_vencimento[lte]') {
+                    dateFilters[Op.lte] = value; // Usa Op.lte do Sequelize
+                }
+                // Tratamento para igualdade exata em data (menos comum para busca)
+                // else if (key === 'data_vencimento') {
+                //    whereClause.data_vencimento = value;
+                // }
+                // Adiciona outros filtros que são colunas diretas
+                else if (['id_usuario', 'status', 'tipo', 'id_recorrencia_pai'].includes(key)) {
+                     // Validar/Converter tipos se necessário (ex: id_usuario para número)
+                     if(key === 'id_usuario' || key === 'id_recorrencia_pai') {
+                         const numValue = parseInt(value, 10);
+                         if (!isNaN(numValue)) whereClause[key] = numValue;
+                     } else {
+                         whereClause[key] = value;
+                     }
+                }
+                // Ignorar outros parâmetros desconhecidos
+            }
         }
 
+        // Adiciona o filtro de data à cláusula WHERE apenas se existirem condições
+        if (Object.keys(dateFilters).length > 0) {
+            whereClause.data_vencimento = dateFilters;
+        }
+
+        console.log("Cláusula WHERE final para findAll em listPaymentAlerts:", whereClause); // Log para Debug
 
         const alertasPagamento = await AlertaPagamento.findAll({
             where: whereClause,
@@ -103,41 +116,36 @@ const listPaymentAlerts = async (filters = {}) => {
         });
         return alertasPagamento;
     } catch (error) {
-        console.error("Erro ao listar alertas de pagamento:", error);
-        throw error;
+        console.error("Erro Sequelize em listPaymentAlerts:", error);
+        // O log do SQL gerado pode estar no erro original (error.parent.sql ou error.sql)
+        console.error("SQL Gerado (se disponível no erro):", error.sql || error.parent?.sql);
+        throw error; // Re-lança para a rota
     }
 };
 
+
 /**
  * Atualiza um alerta de pagamento existente (exceto status 'pago').
- * Use updateStatusByCode para mudar o status, especialmente para 'pago'.
  * @param {number} id_alerta - ID do alerta.
- * @param {object} updates - Campos a serem atualizados.
+ * @param {object} updates - Campos a serem atualizados (já filtrados pela rota).
+ * @param {number} [id_usuario_logado] - ID do usuário logado (para validação opcional).
  * @returns {Promise<AlertaPagamento|null>} O alerta atualizado ou null.
  */
-const updatePaymentAlert = async (id_alerta, updates) => {
+const updatePaymentAlert = async (id_alerta, updates, id_usuario_logado = null) => {
     try {
         const alertaPagamento = await AlertaPagamento.findByPk(id_alerta);
         if (!alertaPagamento) {
             return null; // Não encontrado
         }
 
-        // Impedir atualização direta para 'pago' ou de alertas já pagos/cancelados? (Opcional)
-        // if (updates.status === 'pago' || ['pago', 'cancelado'].includes(alertaPagamento.status)) {
-        //     console.warn(`Tentativa de atualização inválida para alerta ${id_alerta} com status ${alertaPagamento.status}`);
-        //     // Poderia retornar um erro ou simplesmente ignorar a atualização de status
-        //     delete updates.status;
-        // }
-
-        // Não permitir alterar campos críticos como id_usuario, id_recorrencia_pai, codigo_unico
-        delete updates.id_usuario;
-        delete updates.id_recorrencia_pai;
-        delete updates.codigo_unico;
-        delete updates.id_alerta;
-
+        // Segurança Opcional: Validar se pertence ao usuário logado
+        if (id_usuario_logado && alertaPagamento.id_usuario !== id_usuario_logado) {
+            console.warn(`Tentativa de atualizar alerta ${id_alerta} por usuário não autorizado (${id_usuario_logado})`);
+            return null; // Ou lançar um erro de permissão
+        }
 
         await alertaPagamento.update(updates);
-        return alertaPagamento;
+        return alertaPagamento; // Retorna o objeto atualizado
     } catch (error) {
         console.error("Erro ao atualizar alerta de pagamento:", error);
         throw error;
@@ -182,7 +190,6 @@ const deletePaymentAlertByCode = async (codigo_unico, id_usuario) => {
     }
 };
 
-
 /**
  * Busca alertas de pagamento pendentes e próximos do vencimento.
  * @param {number} id_usuario - ID do usuário.
@@ -192,23 +199,21 @@ const deletePaymentAlertByCode = async (codigo_unico, id_usuario) => {
 const getUpcomingPaymentAlerts = async (id_usuario, daysAhead = 7) => {
     try {
         const today = new Date();
-        // Zera a hora para pegar desde o início do dia
-        today.setHours(0, 0, 0, 0);
+        today.setHours(0, 0, 0, 0); // Zera hora para início do dia
 
         const futureDate = new Date(today);
         futureDate.setDate(today.getDate() + daysAhead);
-        // Define o fim do dia para incluir alertas que vencem no último dia
-        futureDate.setHours(23, 59, 59, 999);
+        futureDate.setHours(23, 59, 59, 999); // Define fim do último dia
 
         const alertasPagamento = await AlertaPagamento.findAll({
             where: {
                 id_usuario: id_usuario,
                 data_vencimento: {
-                    [Sequelize.Op.between]: [today, futureDate]
+                    [Op.between]: [today.toISOString().split('T')[0], futureDate.toISOString().split('T')[0]] // Usar Op.between
                 },
                 status: 'pendente' // Apenas pendentes
             },
-            order: [['data_vencimento', 'ASC']] // Ordenar por data de vencimento
+            order: [['data_vencimento', 'ASC']]
         });
         return alertasPagamento;
 
@@ -221,7 +226,7 @@ const getUpcomingPaymentAlerts = async (id_usuario, daysAhead = 7) => {
 /**
  * Atualiza o status de um alerta pelo código único e ID do usuário.
  * Se o novo status for 'pago' e o status atual for 'pendente',
- * cria a transação correspondente.
+ * cria a transação correspondente usando uma transação DB.
  * @param {string} codigo_unico - Código único do alerta.
  * @param {number} id_usuario - ID do usuário proprietário.
  * @param {'pendente' | 'pago' | 'cancelado'} novoStatus - O novo status desejado.
@@ -231,14 +236,14 @@ const updateStatusByCode = async (codigo_unico, id_usuario, novoStatus) => {
     const t = await AlertaPagamento.sequelize.transaction(); // Inicia transação do DB
 
     try {
-        // Busca o alerta dentro da transação para garantir bloqueio
         const alerta = await AlertaPagamento.findOne({
             where: { codigo_unico: codigo_unico, id_usuario: id_usuario },
-            transaction: t // <<< Adiciona lock na linha
+            transaction: t, // Usa a transação para lock
+            lock: t.LOCK.UPDATE // Adiciona lock para evitar condição de corrida
         });
 
         if (!alerta) {
-            await t.rollback(); // Libera a transação
+            await t.rollback();
             return { success: false, status: 404, message: "Alerta não encontrado." };
         }
 
@@ -251,58 +256,54 @@ const updateStatusByCode = async (codigo_unico, id_usuario, novoStatus) => {
              await t.rollback();
              return { success: false, status: 400, message: "Não é possível cancelar um alerta já pago." };
         }
-        // Se já estiver no status desejado, não faz nada (sucesso idempotente)
         if (alerta.status === novoStatus) {
-            await t.commit(); // Confirma a transação (embora nada tenha mudado)
+            await t.commit(); // Commit mesmo sem mudanças para liberar lock
             return { success: true, status: 200, data: alerta, message: "Alerta já estava neste status." };
         }
 
-
         // --- LÓGICA PARA CRIAR TRANSAÇÃO AO PAGAR ---
         if (novoStatus === 'pago' && alerta.status === 'pendente') {
-            // Obter data atual no formato YYYY-MM-DD
-            const dataTransacao = new Date().toISOString().split('T')[0];
-
-            // Prepara os dados para a transação
+            const dataTransacao = new Date().toISOString().split('T')[0]; // Data de hoje
             const dadosTransacao = {
                 id_usuario: alerta.id_usuario,
                 tipo: alerta.tipo,
                 valor: alerta.valor,
-                nome_categoria: alerta.nome_categoria, // Usar a categoria do alerta
-                data_transacao: dataTransacao, // Data do pagamento = hoje
+                nome_categoria: alerta.nome_categoria,
+                data_transacao: dataTransacao,
                 descricao: alerta.descricao || `Pagamento/Recebimento ref. Alerta ${alerta.codigo_unico}`,
-                id_alerta_origem: alerta.id_alerta // <<< VINCULA A TRANSAÇÃO AO ALERTA
-                // Outros campos como comprovante_url, id_transacao_pai, parcelas são null/default
+                id_alerta_origem: alerta.id_alerta // Vínculo importante
             };
 
-            // Cria a transação DENTRO da mesma transação do DB
-            const transacaoCriada = await transacaoService.createTransaction(dadosTransacao/*, { transaction: t } */); // << Passar a transaction se createTransaction suportar
-
+            // Chama createTransaction (que agora aceita objeto)
+            // Idealmente, createTransaction também aceitaria a opção { transaction: t }
+            const transacaoCriada = await transacaoService.createTransaction(dadosTransacao /*, { transaction: t } */);
 
             if (!transacaoCriada || !transacaoCriada.id_transacao) {
-                 // Se falhar, desfaz tudo
-                await t.rollback();
+                await t.rollback(); // Desfaz tudo se a criação da transação falhar
+                console.error(`Falha ao criar transação para alerta ${alerta.codigo_unico}. Dados:`, dadosTransacao);
                 throw new Error("Falha ao criar a transação correspondente.");
             }
+            console.log(`Transação ${transacaoCriada.id_transacao} criada para o alerta ${alerta.codigo_unico}`);
         }
         // --- FIM DA LÓGICA DE CRIAÇÃO ---
 
-        // Atualiza o status do alerta (ainda dentro da transação)
+        // Atualiza o status do alerta dentro da transação
         alerta.status = novoStatus;
-        await alerta.save({ transaction: t }); // <<< Salva dentro da transação
+        await alerta.save({ transaction: t });
 
-        // Se tudo deu certo, confirma a transação no DB
+        // Confirma a transação no DB
         await t.commit();
 
         return { success: true, status: 200, data: alerta };
 
     } catch (error) {
-        // Se qualquer erro ocorreu (incluindo na criação da transação), desfaz tudo
+        // Qualquer erro durante o processo, desfaz a transação
         await t.rollback();
         console.error(`Erro ao atualizar status do alerta ${codigo_unico} para ${novoStatus}:`, error);
-        // Retorna um erro 500 genérico para a rota tratar
-        // Lançar o erro aqui garante que a rota retorne 500
-        throw new Error("Erro interno ao processar a atualização do status do alerta.");
+        // Lança o erro para a rota retornar 500
+        // Pega a mensagem original do erro, se existir
+        const errorMessage = error.original?.message || error.message || "Erro interno ao processar a atualização do status do alerta.";
+        throw new Error(errorMessage);
     }
 };
 
@@ -310,12 +311,13 @@ const updateStatusByCode = async (codigo_unico, id_usuario, novoStatus) => {
  * Deleta todos os alertas de pagamento PENDENTES associados a uma recorrência pai.
  * @param {number} id_recorrencia_pai - ID da recorrência pai.
  * @param {number} id_usuario - ID do usuário proprietário.
+ * @param {object} [options] - Opções adicionais (ex: { transaction: t }).
  * @returns {Promise<number>} O número de alertas deletados.
  */
-const deletePendingAlertsByRecurrence = async (id_recorrencia_pai, id_usuario) => {
+const deletePendingAlertsByRecurrence = async (id_recorrencia_pai, id_usuario, options = {}) => {
     if (!id_recorrencia_pai || !id_usuario) {
         console.warn("[deletePendingAlertsByRecurrence] ID da recorrência ou usuário ausente.");
-        return 0; // Segurança
+        return 0;
     }
 
     try {
@@ -324,14 +326,18 @@ const deletePendingAlertsByRecurrence = async (id_recorrencia_pai, id_usuario) =
                 id_recorrencia_pai: id_recorrencia_pai,
                 id_usuario: id_usuario,
                 status: 'pendente' // <<< SÓ DELETA OS PENDENTES
-            }
+            },
+            transaction: options.transaction // Passa a transação se fornecida
         });
         console.log(`[INFO] Deletados ${deletedCount} alertas pendentes para recorrência ${id_recorrencia_pai} do usuário ${id_usuario}`);
         return deletedCount;
     } catch (error) {
         console.error(`Erro ao deletar alertas pendentes para recorrência ${id_recorrencia_pai}:`, error);
-        // Não lançar erro aqui pode ser melhor para não quebrar a deleção da recorrência pai
-        return 0; // Retorna 0 em caso de erro para não travar o processo pai
+        // Se estiver dentro de uma transação maior, relançar o erro é crucial
+        if (options.transaction) {
+             throw error;
+        }
+        return 0; // Retorna 0 se não estiver em transação e ocorrer erro
     }
 };
 
@@ -340,10 +346,10 @@ module.exports = {
     createPaymentAlert,
     getPaymentAlertById,
     listPaymentAlerts,
-    updatePaymentAlert, // Manter a antiga se usada em outro lugar
+    updatePaymentAlert,
     deletePaymentAlert,
     deletePaymentAlertByCode,
     getUpcomingPaymentAlerts,
-    updateStatusByCode, // Exportar nova função de status
-    deletePendingAlertsByRecurrence // Exportar função de limpeza
+    updateStatusByCode,
+    deletePendingAlertsByRecurrence
 };

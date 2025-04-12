@@ -13,6 +13,8 @@ const tagRoutes = require('./src/tags/tag.routes');
 const alertaPagamentoRoutes = require('./src/alertas-pagamento/alerta-pagamento.routes');
 const recorrenciaRoutes = require('./src/recorrencias/recorrencia.routes');
 const authRoutes = require('./src/auth/auth.routes');
+const alertScheduler = require('./src/jobs/alertScheduler'); // <<< Importar o agendador
+
 // --- Importar Rotas ---
 
 const app = express();

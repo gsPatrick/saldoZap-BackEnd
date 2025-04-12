@@ -39,6 +39,8 @@ router.post('/', async (req, res) => {
 router.get('/', async (req, res) => {
     // Extrai TODOS os parâmetros da query string
     const queryParams = { ...req.query };
+    console.log("Query Params Recebidos na Rota:", queryParams); // <<< ADICIONE ESTE LOG
+
     let filters = {}; // Objeto para guardar filtros processados
 
     // 1. Processar id_usuario (Obrigatório?)

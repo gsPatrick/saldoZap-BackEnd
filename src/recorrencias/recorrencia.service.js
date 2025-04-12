@@ -1,176 +1,320 @@
 // src/recorrencias/recorrencia.service.js
+const sequelize = require('../config/database');
+const { Op } = require('sequelize');
 const Recorrencia = require('./recorrencia.model');
-const Usuario = require('../usuarios/usuario.model'); // Para includes, se necessário
-const alertaPagamentoService = require('../alertas-pagamento/alerta-pagamento.service'); // <<< IMPORTAR AlertaPagamentoService
+const Usuario = require('../usuarios/usuario.model');
+const AlertaPagamento = require('../alertas-pagamento/alerta-pagamento.model');
+const alertaPagamentoService = require('../alertas-pagamento/alerta-pagamento.service');
 
-/**
- * Cria uma nova recorrência.
- * @param {number} id_usuario - ID do usuário proprietário.
- * @param {'despesa'|'receita'} tipo - Tipo da recorrência.
- * @param {number} valor - Valor de cada ocorrência.
- * @param {string} [nome_categoria] - Nome da categoria associada.
- * @param {string} [origem] - Origem (para receitas).
- * @param {string} data_inicio - Data de início da recorrência (YYYY-MM-DD).
- * @param {'diaria'|'semanal'|'mensal'|'anual'} frequencia - Frequência da recorrência.
- * @param {number} [dia_mes] - Dia do mês (para frequência mensal).
- * @param {'segunda'|'terca'|'quarta'|'quinta'|'sexta'|'sabado'|'domingo'} [dia_semana] - Dia da semana (para frequência semanal).
- * @param {number} [intervalo=1] - Intervalo entre ocorrências (ex: a cada 2 meses).
- * @param {string} [data_fim_recorrencia] - Data final da recorrência (YYYY-MM-DD, opcional).
- * @param {string} [descricao] - Descrição da recorrência.
- * @returns {Promise<Recorrencia>} A recorrência criada.
- */
+function _calcularProximaDataOcorrencia(recorrencia, aPartirDe) {
+    const { frequencia, intervalo = 1, dia_mes, dia_semana, data_inicio } = recorrencia;
+    let proximaData = new Date(aPartirDe);
+    proximaData.setHours(12, 0, 0, 0);
+
+    const dtInicio = new Date(data_inicio);
+    dtInicio.setHours(12, 0, 0, 0);
+    if (proximaData < dtInicio) {
+        proximaData = new Date(dtInicio);
+    }
+
+    // Avança um dia para calcular a *próxima* ocorrência após aPartirDe
+    proximaData.setDate(proximaData.getDate() + 1);
+    proximaData.setHours(12, 0, 0, 0);
+
+
+    let loopSafety = 0;
+    const MAX_LOOPS = 366 * intervalo + 5; // Segurança para pouco mais de 1 ciclo do maior intervalo comum
+
+    while (loopSafety < MAX_LOOPS) {
+        loopSafety++;
+        let dataCandidata = new Date(proximaData);
+
+        switch (frequencia) {
+            case 'mensal':
+                if (!dia_mes) return null;
+                let mesRef = dataCandidata.getMonth();
+                dataCandidata.setDate(dia_mes);
+                // Se setDate pulou para o próximo mês ou data inválida, avança mês base e tenta de novo
+                if (dataCandidata.getMonth() !== mesRef || dataCandidata.getDate() !== dia_mes) {
+                    proximaData.setMonth(proximaData.getMonth() + intervalo);
+                    proximaData.setDate(1); // Reinicia no dia 1 para a próxima iteração
+                    continue;
+                }
+                return dataCandidata; // Encontrou
+
+            case 'semanal':
+                const diasMap = { domingo: 0, segunda: 1, terca: 2, quarta: 3, quinta: 4, sexta: 5, sabado: 6 };
+                const diaAlvo = diasMap[dia_semana];
+                if (diaAlvo === undefined) return null;
+
+                // Avança até encontrar o dia da semana correto DENTRO da semana atual ou futuras
+                while (dataCandidata.getDay() !== diaAlvo) {
+                    dataCandidata.setDate(dataCandidata.getDate() + 1);
+                }
+                 // Verifica se está na primeira semana válida após o intervalo
+                 // Cálculo complexo de intervalo semanal omitido para simplicidade, assume intervalo 1
+                 return dataCandidata; // Retorna o primeiro dia correto encontrado a partir de proximaData
+
+            case 'diaria':
+                dataCandidata.setDate(dataCandidata.getDate() + (intervalo -1)); // Avança o intervalo menos 1 (já avançamos 1 no início)
+                return dataCandidata;
+
+            case 'anual':
+                 if (!data_inicio) return null;
+                 let mesInicio = new Date(data_inicio).getMonth();
+                 let diaInicio = new Date(data_inicio).getDate();
+                 // Garante que está no ano correto ou futuro
+                 if(dataCandidata.getFullYear() < new Date(data_inicio).getFullYear()){
+                    dataCandidata.setFullYear(new Date(data_inicio).getFullYear());
+                 }
+                 dataCandidata.setMonth(mesInicio, diaInicio); // Tenta definir mês/dia
+                  // Se data ficou no passado, avança N anos
+                 while (dataCandidata < aPartirDe || dataCandidata < dtInicio) {
+                     dataCandidata.setFullYear(dataCandidata.getFullYear() + intervalo);
+                     dataCandidata.setMonth(mesInicio, diaInicio); // Garante mês/dia
+                 }
+                 // Validação de 29 Fev omitida para simplicidade
+                 return dataCandidata;
+
+            default:
+                console.error(`Frequência desconhecida: ${frequencia}`);
+                return null;
+        }
+
+        // Se chegou aqui (caso mensal não retornou ou semanal), precisa avançar proximaData
+        // switch (frequencia) {
+        //     case 'mensal': proximaData.setMonth(proximaData.getMonth() + intervalo); proximaData.setDate(1); break;
+        //     case 'semanal': proximaData.setDate(proximaData.getDate() + 7 * intervalo); break;
+            // Diaria e Anual já retornaram ou avançaram dentro do case
+        // }
+
+    }
+
+    console.warn(`Cálculo de próxima ocorrência atingiu limite de ${MAX_LOOPS} loops.`);
+    return null;
+}
+
+
+async function _generateFutureAlerts(recorrencia, horizonteMeses = 12, transaction) {
+    const alertasParaCriar = [];
+    const hoje = new Date();
+    hoje.setHours(12, 0, 0, 0);
+
+    const horizonteFim = new Date(hoje);
+    horizonteFim.setMonth(hoje.getMonth() + horizonteMeses);
+    horizonteFim.setHours(12, 0, 0, 0);
+
+    const dataFimRec = recorrencia.data_fim_recorrencia ? new Date(recorrencia.data_fim_recorrencia) : null;
+    if (dataFimRec) dataFimRec.setHours(12, 0, 0, 0);
+
+    let dataCalculo = new Date(recorrencia.data_inicio);
+    dataCalculo.setHours(12, 0, 0, 0);
+
+    let iterations = 0;
+    const MAX_ITERATIONS = horizonteMeses * 40;
+
+    while (dataCalculo <= horizonteFim && (!dataFimRec || dataCalculo <= dataFimRec) && iterations < MAX_ITERATIONS) {
+        iterations++;
+
+        if (!isNaN(dataCalculo.getTime()) && dataCalculo >= new Date(recorrencia.data_inicio).setHours(12,0,0,0)) {
+            const dataVencimentoStr = dataCalculo.toISOString().split('T')[0];
+            alertasParaCriar.push({
+                id_usuario: recorrencia.id_usuario,
+                valor: recorrencia.valor,
+                data_vencimento: dataVencimentoStr,
+                tipo: recorrencia.tipo,
+                descricao: `${recorrencia.descricao || recorrencia.nome_categoria || 'Recorrência'} (${dataCalculo.toLocaleDateString('pt-BR', { month: 'short', year: '2-digit'})})`,
+                nome_categoria: recorrencia.nome_categoria,
+                id_recorrencia_pai: recorrencia.id_recorrencia,
+                status: 'pendente'
+            });
+        } else if (isNaN(dataCalculo.getTime())) {
+            console.error(`[GenerateAlerts] Data de cálculo inválida encontrada para Rec ID ${recorrencia.id_recorrencia}. Iteração ${iterations}. Parando.`);
+            break;
+        }
+
+        let proximaData = _calcularProximaDataOcorrencia(recorrencia, dataCalculo);
+
+        if (!proximaData || isNaN(proximaData.getTime()) || proximaData <= dataCalculo) {
+             console.warn(`[GenerateAlerts] Não foi possível calcular a próxima data após ${dataCalculo.toISOString().split('T')[0]} para Rec ID ${recorrencia.id_recorrencia} ou data não avançou. Encerrando loop.`);
+             break;
+        }
+        dataCalculo = proximaData;
+
+    } // Fim while
+
+     if (iterations >= MAX_ITERATIONS) {
+         console.error(`[GenerateAlerts] Limite de ${MAX_ITERATIONS} iterações atingido para Rec ID ${recorrencia.id_recorrencia}. Verifique a lógica de cálculo/avanço de data.`);
+     }
+
+    if (alertasParaCriar.length > 0) {
+        console.log(`[GenerateAlerts] Tentando criar ${alertasParaCriar.length} alertas futuros para Rec ID ${recorrencia.id_recorrencia}`);
+        try {
+            await AlertaPagamento.bulkCreate(alertasParaCriar, {
+                transaction: transaction,
+                validate: true,
+                // ignoreDuplicates: true // Considerar com cuidado
+            });
+            console.log(`[GenerateAlerts] ${alertasParaCriar.length} alertas criados com sucesso para Rec ID ${recorrencia.id_recorrencia}.`);
+        } catch (bulkError) {
+             console.error(`[GenerateAlerts] Erro durante bulkCreate para Rec ID ${recorrencia.id_recorrencia}:`, bulkError);
+             throw bulkError;
+        }
+    } else {
+         console.log(`[GenerateAlerts] Nenhum alerta futuro a ser gerado no horizonte para Rec ID ${recorrencia.id_recorrencia}.`);
+    }
+}
+
+
 const createRecurrence = async (id_usuario, tipo, valor, nome_categoria, origem, data_inicio, frequencia, dia_mes, dia_semana, intervalo = 1, data_fim_recorrencia, descricao) => {
+    const t = await sequelize.transaction();
+
     try {
+        console.log(`[INFO] Iniciando criação de recorrência para usuário ${id_usuario} - Desc: ${descricao || nome_categoria}`);
         const recorrencia = await Recorrencia.create({
-            id_usuario,
-            tipo,
-            valor,
-            nome_categoria, // Campo já existe no modelo Recorrencia
-            origem,
-            data_inicio,
-            frequencia,
-            dia_mes,
-            dia_semana,
-            intervalo: intervalo || 1, // Garante default 1 se nulo/undefined
-            data_fim_recorrencia,
-            descricao
-        });
-        // IMPORTANTE: Após criar a recorrência, o N8N (ou um hook 'afterCreate' aqui)
-        // precisaria ser acionado para gerar os AlertaPagamento futuros.
-        // A criação direta aqui dentro tornaria a resposta da API lenta.
+            id_usuario, tipo, valor, nome_categoria, origem, data_inicio, frequencia,
+            dia_mes, dia_semana, intervalo: intervalo || 1, data_fim_recorrencia, descricao
+        }, { transaction: t });
+
+        console.log(`[INFO] Recorrência ${recorrencia.id_recorrencia} criada. Gerando alertas futuros...`);
+        const horizonteGeracaoMeses = 24; // Gera para os próximos 24 meses
+        await _generateFutureAlerts(recorrencia, horizonteGeracaoMeses, t);
+
+        await t.commit();
+        console.log(`[SUCCESS] Recorrência ${recorrencia.id_recorrencia} e alertas futuros criados com sucesso.`);
         return recorrencia;
+
     } catch (error) {
-        console.error("Erro ao criar recorrência:", error);
-        throw error; // Re-lança para a rota tratar
+        console.error(`[ROLLBACK] Erro ao criar recorrência ou seus alertas para usuário ${id_usuario}:`, error);
+        await t.rollback();
+        const errorMessage = error.original?.detail || error.original?.message || error.message || 'Erro desconhecido ao criar recorrência.';
+        throw new Error(`Erro ao criar recorrência: ${errorMessage}`);
     }
 };
 
-/**
- * Busca uma recorrência pelo seu ID (PK).
- * @param {number} id_recorrencia - ID da recorrência.
- * @param {number} id_usuario - ID do usuário (para validação de permissão).
- * @returns {Promise<Recorrencia|null>} A recorrência encontrada ou null.
- */
+
 const getRecurrenceById = async (id_recorrencia, id_usuario) => {
     try {
         const recorrencia = await Recorrencia.findOne({
              where: {
                  id_recorrencia: id_recorrencia,
-                 id_usuario: id_usuario // Filtra pelo usuário
-                },
-             include: [ // Include opcional para trazer dados relacionados
-                 // { model: Usuario, as: 'usuario' },
-                 // { model: AlertaPagamento, as: 'alertasGerados', where: { status: 'pendente'}, required: false } // Ex: buscar alertas pendentes
-             ]
+                 id_usuario: id_usuario
+                }
          });
         return recorrencia;
     } catch (error) {
-        console.error("Erro ao obter recorrência por ID:", error);
+        console.error(`Erro ao obter recorrência ${id_recorrencia} para usuário ${id_usuario}:`, error);
         throw error;
     }
 };
 
-/**
- * Lista todas as recorrências de um usuário.
- * @param {number} id_usuario - ID do usuário.
- * @returns {Promise<Recorrencia[]>} Lista de recorrências.
- */
+
 const listRecurrences = async (id_usuario) => {
     try {
         const recorrencias = await Recorrencia.findAll({
             where: { id_usuario },
-            // include: [{ model: Usuario, as: 'usuario' }] // Opcional
-             order: [['data_inicio', 'DESC']] // Ou outra ordem desejada
+            order: [['data_inicio', 'DESC']]
         });
         return recorrencias;
     } catch (error) {
-        console.error("Erro ao listar recorrências:", error);
+        console.error(`Erro ao listar recorrências para usuário ${id_usuario}:`, error);
         throw error;
     }
 };
 
-/**
- * Atualiza uma recorrência existente.
- * @param {number} id_recorrencia - ID da recorrência.
- * @param {number} id_usuario - ID do usuário (para validação).
- * @param {object} updates - Campos a serem atualizados.
- * @returns {Promise<Recorrencia|null>} A recorrência atualizada ou null.
- */
+
 const updateRecurrence = async (id_recorrencia, id_usuario, updates) => {
-    try {
-        const recorrencia = await Recorrencia.findOne({
-             where: { id_recorrencia: id_recorrencia, id_usuario: id_usuario }
-         });
+     const t = await sequelize.transaction();
+     try {
+         console.log(`[INFO] Iniciando atualização da recorrência ${id_recorrencia} para usuário ${id_usuario}`);
+         const recorrencia = await Recorrencia.findOne({
+              where: { id_recorrencia: id_recorrencia, id_usuario: id_usuario },
+              transaction: t,
+              lock: t.LOCK.UPDATE
+          });
 
-        if (!recorrencia) {
-            return null; // Não encontrado ou não pertence ao usuário
-        }
+         if (!recorrencia) {
+             await t.rollback();
+             console.log(`[INFO] Recorrência ${id_recorrencia} não encontrada ou não pertence ao usuário ${id_usuario}.`);
+             return null;
+         }
 
-        // Remover campos que não devem ser atualizados diretamente
-        delete updates.id_usuario;
-        delete updates.id_recorrencia;
-        // Remover o antigo campo id_categoria se ainda estiver sendo enviado
-        delete updates.id_categoria;
+         const oldData = recorrencia.get({ plain: true });
+         const cleanUpdates = { ...updates };
+         delete cleanUpdates.id_usuario;
+         delete cleanUpdates.id_recorrencia;
+         delete cleanUpdates.id_categoria;
 
-        await recorrencia.update(updates);
+         await recorrencia.update(cleanUpdates, { transaction: t });
+         console.log(`[INFO] Recorrência ${id_recorrencia} atualizada no banco.`);
 
-        // IMPORTANTE: Após atualizar, especialmente se datas ou frequência mudarem,
-        // o N8N (ou um hook 'afterUpdate' aqui) precisaria re-gerar/ajustar
-        // os AlertaPagamento futuros.
-        return recorrencia;
-    } catch (error) {
-        console.error("Erro ao atualizar recorrência:", error);
-        throw error;
-    }
-};
+         const criticalFields = ['data_inicio', 'frequencia', 'intervalo', 'dia_mes', 'dia_semana', 'data_fim_recorrencia', 'valor', 'tipo'];
+         const criticalFieldsChanged = criticalFields
+             .some(field => {
+                 const newValue = cleanUpdates[field];
+                 const oldValue = oldData[field];
+                 if (newValue === undefined) return false; // Campo não estava no update
+                 if (field === 'data_inicio' || field === 'data_fim_recorrencia') {
+                      const oldDateStr = oldValue ? new Date(oldValue).toISOString().split('T')[0] : null;
+                      const newDateStr = newValue ? new Date(newValue).toISOString().split('T')[0] : null;
+                      return oldDateStr !== newDateStr;
+                 }
+                 return String(newValue) !== String(oldValue);
+             });
 
-/**
- * Deleta uma recorrência e seus alertas pendentes associados.
- * @param {number} id_recorrencia - ID da recorrência a ser deletada.
- * @param {number} id_usuario - ID do usuário proprietário (para segurança).
- * @returns {Promise<boolean>} True se a recorrência foi deletada, false caso contrário.
- */
+         if (criticalFieldsChanged) {
+             console.log(`[INFO] Recorrência ${id_recorrencia} atualizada com campos críticos. Regerando alertas futuros.`);
+             await alertaPagamentoService.deletePendingAlertsByRecurrence(id_recorrencia, id_usuario, { transaction: t });
+             const horizonteGeracaoMeses = 24;
+             await _generateFutureAlerts(recorrencia, horizonteGeracaoMeses, t);
+         } else {
+              console.log(`[INFO] Recorrência ${id_recorrencia} atualizada sem campos críticos alterados. Alertas futuros mantidos.`);
+         }
+
+         await t.commit();
+         return recorrencia;
+
+     } catch (error) {
+         await t.rollback();
+         console.error(`Erro ao atualizar recorrência ${id_recorrencia}:`, error);
+         const detail = error.original?.detail || error.message;
+         throw new Error(`Erro ao atualizar recorrência: ${detail}`);
+     }
+ };
+
+
 const deleteRecurrence = async (id_recorrencia, id_usuario) => {
-    const t = await Recorrencia.sequelize.transaction(); // Inicia transação DB
-
+    const t = await sequelize.transaction();
     try {
-        // 1. Encontra a recorrência para garantir que pertence ao usuário (dentro da transação)
         const recorrencia = await Recorrencia.findOne({
             where: { id_recorrencia: id_recorrencia, id_usuario: id_usuario},
-            transaction: t // Bloqueia a linha
+            transaction: t
         });
 
         if (!recorrencia) {
-            await t.rollback(); // Libera a transação
-            return false; // Não encontrado ou não pertence ao usuário
+            await t.rollback();
+            console.warn(`Tentativa de deletar recorrência inexistente ou não autorizada: ID ${id_recorrencia}, Usuário ${id_usuario}`);
+            return false;
         }
 
-        // 2. Chama a função para deletar os alertas PENDENTES associados (dentro da transação)
-        // Note que deletePendingAlertsByRecurrence não precisa de transação interna,
-        // pois ela só faz um `destroy` que será incluído nesta transação `t`.
-        const deletedAlertsCount = await alertaPagamentoService.deletePendingAlertsByRecurrence(
+        await alertaPagamentoService.deletePendingAlertsByRecurrence(
             id_recorrencia,
-            id_usuario /*, { transaction: t } */ // Passar a transação se a função suportar
+            id_usuario,
+            { transaction: t }
         );
-        console.log(`[deleteRecurrence] ${deletedAlertsCount} alertas pendentes associados marcados para deleção.`);
 
-        // 3. Deleta a recorrência pai (dentro da transação)
         const recorrenciaDeletadaCount = await Recorrencia.destroy({
-            where: { id_recorrencia: id_recorrencia }, // ID já validado pelo findOne
-            transaction: t // Garante que a deleção ocorra na transação
+            where: { id_recorrencia: id_recorrencia },
+            transaction: t
         });
 
-        // 4. Confirma a transação se tudo correu bem
         await t.commit();
-
-        // Retorna true se a recorrência foi deletada (count > 0)
+        console.log(`[INFO] Recorrência ${id_recorrencia} e seus alertas pendentes deletados com sucesso.`);
         return recorrenciaDeletadaCount > 0;
 
     } catch (error) {
-        // 5. Se qualquer erro ocorreu, desfaz tudo
         await t.rollback();
-        console.error(`Erro ao deletar recorrência ${id_recorrencia}:`, error);
-        // Re-lança o erro para a rota tratar como 500
+        console.error(`Erro ao deletar recorrência ${id_recorrencia} e seus alertas:`, error);
         throw new Error(`Erro interno ao deletar recorrência ${id_recorrencia}.`);
     }
 };
@@ -181,5 +325,5 @@ module.exports = {
     getRecurrenceById,
     listRecurrences,
     updateRecurrence,
-    deleteRecurrence // Exporta a versão modificada que inclui a limpeza de alertas
+    deleteRecurrence
 };

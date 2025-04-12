@@ -1,8 +1,8 @@
 // src/alertas-pagamento/alerta-pagamento.service.js
 const AlertaPagamento = require('./alerta-pagamento.model');
 const transacaoService = require('../transacoes/transacao.service'); // Importar TransactionService
-const { Sequelize, Op } = require('sequelize'); // Importar Op do Sequelize
 const { nanoid } = require('nanoid'); // Para gerar código único
+const { Op } = require('sequelize');
 
 // --- Função Helper para Gerar Código Único de Alerta ---
 // (Esta função não é mais necessária se o hook beforeValidate no modelo funciona)
@@ -74,24 +74,19 @@ const listPaymentAlerts = async (queryParams = {}) => {
         const whereClause = {};
         const dateFilters = {};
 
-        // Itera sobre os parâmetros recebidos da rota
+        // Loop CORRETO
         for (const key in queryParams) {
             if (Object.hasOwnProperty.call(queryParams, key)) {
                 const value = queryParams[key];
 
-                // Tratamento específico para filtros de data com operadores
+                // Condições CORRETAS para checar as chaves de data
                 if (key === 'data_vencimento[gte]') {
-                    dateFilters[Op.gte] = value; // Usa Op.gte do Sequelize
+                    dateFilters[Op.gte] = value; // Atribuição CORRETA usando Op.gte
                 } else if (key === 'data_vencimento[lte]') {
-                    dateFilters[Op.lte] = value; // Usa Op.lte do Sequelize
+                    dateFilters[Op.lte] = value; // Atribuição CORRETA usando Op.lte
                 }
-                // Tratamento para igualdade exata em data (menos comum para busca)
-                // else if (key === 'data_vencimento') {
-                //    whereClause.data_vencimento = value;
-                // }
-                // Adiciona outros filtros que são colunas diretas
+                // Lógica CORRETA para outros filtros
                 else if (['id_usuario', 'status', 'tipo', 'id_recorrencia_pai'].includes(key)) {
-                     // Validar/Converter tipos se necessário (ex: id_usuario para número)
                      if(key === 'id_usuario' || key === 'id_recorrencia_pai') {
                          const numValue = parseInt(value, 10);
                          if (!isNaN(numValue)) whereClause[key] = numValue;
@@ -99,27 +94,28 @@ const listPaymentAlerts = async (queryParams = {}) => {
                          whereClause[key] = value;
                      }
                 }
-                // Ignorar outros parâmetros desconhecidos
             }
         }
 
-        // Adiciona o filtro de data à cláusula WHERE apenas se existirem condições
+        // Adição CORRETA do filtro de data à whereClause principal
         if (Object.keys(dateFilters).length > 0) {
             whereClause.data_vencimento = dateFilters;
         }
 
-        console.log("Cláusula WHERE final para findAll em listPaymentAlerts:", whereClause); // Log para Debug
+        // Log CORRETO para depuração
+        console.log("Cláusula WHERE final para findAll em listPaymentAlerts:", whereClause);
 
+        // Chamada findAll CORRETA com a whereClause construída
         const alertasPagamento = await AlertaPagamento.findAll({
             where: whereClause,
-            order: [['data_vencimento', 'ASC']] // Ordenar por vencimento
+            order: [['data_vencimento', 'ASC']]
         });
         return alertasPagamento;
     } catch (error) {
+        // Tratamento de erro CORRETO
         console.error("Erro Sequelize em listPaymentAlerts:", error);
-        // O log do SQL gerado pode estar no erro original (error.parent.sql ou error.sql)
         console.error("SQL Gerado (se disponível no erro):", error.sql || error.parent?.sql);
-        throw error; // Re-lança para a rota
+        throw error;
     }
 };
 

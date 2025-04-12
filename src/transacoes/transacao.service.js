@@ -9,12 +9,21 @@ const { nanoid } = require('nanoid'); // Para gerar código único
 const generateUniqueTransactionCode = async () => {
     let code;
     let existing = true;
-    while (existing) {
-        // Gera um código com prefixo e 7 caracteres aleatórios
+    let safetyCount = 0; // Segurança contra loops infinitos
+    while (existing && safetyCount < 10) { // Tenta no máximo 10 vezes
+        safetyCount++;
         code = `TRX-${nanoid(7)}`;
-        // Verifica se já existe (paranoid: false se usar soft deletes)
-        existing = await Transacao.findOne({ where: { codigo_unico: code }, paranoid: false });
+        try {
+             existing = await Transacao.findOne({ where: { codigo_unico: code }, paranoid: false, attributes: ['id_transacao'] });
+             if(existing) console.warn(`[generateUniqueTransactionCode] Colisão detectada para ${code}. Tentando novamente (${safetyCount})...`);
+        } catch (findError){
+             console.error("[generateUniqueTransactionCode] Erro ao verificar existência do código:", findError);
+             throw findError; // Aborta se não consegue verificar
+        }
     }
+     if (existing) { // Se ainda existe após 10 tentativas
+         throw new Error("Não foi possível gerar um código único de transação após várias tentativas.");
+     }
     return code;
 };
 // ---------------------------------------------------------
@@ -114,25 +123,69 @@ function calcularStartDate(periodoInput) {
  * @param {number} [dadosTransacao.id_alerta_origem] - ID do alerta que originou (opcional).
  * @returns {Promise<Transacao>} A transação criada.
  */
-const createTransaction = async (dadosTransacao) => {
-    try {
-        // Gera o código único ANTES de criar
-        const codigo_unico_gerado = await generateUniqueTransactionCode();
+const createTransaction = async (dadosTransacao, options = {}) => {
+    // LOG 1: Início da função e dados recebidos
+    console.log("[createTransaction] Iniciando. Dados recebidos:", JSON.stringify(dadosTransacao, null, 2));
+    if (options.transaction) {
+        console.log(`[createTransaction] Executando dentro da transação ID: ${options.transaction.id || 'N/A'}`);
+    }
 
-        // Cria a transação usando os dados do objeto e o código gerado
-        const novaTransacao = await Transacao.create({
-            ...dadosTransacao, // Inclui todos os campos recebidos
+    try {
+        // LOG 2: Antes de gerar código único
+        console.log("[createTransaction] Gerando código único...");
+        const codigo_unico_gerado = await generateUniqueTransactionCode();
+        // LOG 3: Após gerar código único
+        console.log("[createTransaction] Código único gerado:", codigo_unico_gerado);
+
+        // Prepara o objeto final para criação
+        const dadosParaCriar = {
+            ...dadosTransacao, // Inclui id_usuario, tipo, valor, id_alerta_origem etc.
             codigo_unico: codigo_unico_gerado, // Adiciona o código gerado
-        });
-        return novaTransacao;
-    } catch (error) {
-        console.error("Erro ao criar transação:", error);
-        if (error.name === 'SequelizeUniqueConstraintError') {
-            console.error("Colisão de código único de transação detectada (raro).");
+        };
+
+        // LOG 4: Antes de chamar Transacao.create
+        console.log("[createTransaction] Chamando Transacao.create com:", JSON.stringify(dadosParaCriar, null, 2));
+
+        // Chama Transacao.create passando os dados e as opções (que podem conter a transação)
+        const novaTransacao = await Transacao.create(dadosParaCriar, options);
+
+        // LOG 5: Após chamar Transacao.create
+        // Verifica se o objeto retornado é válido e loga o ID
+        if (novaTransacao && novaTransacao.id_transacao) {
+            console.log(`[createTransaction] Transacao.create SUCESSO. ID da Nova Transação: ${novaTransacao.id_transacao}`);
+        } else {
+             // Isso não deveria acontecer se o create funcionou, mas é uma checagem extra
+            console.warn("[createTransaction] Transacao.create retornou um valor inesperado:", novaTransacao);
+            // Tentar recarregar pode ajudar em casos estranhos, mas indica um problema
+            // if (novaTransacao && typeof novaTransacao.reload === 'function') {
+            //     console.log("[createTransaction] Tentando recarregar a transação...");
+            //     await novaTransacao.reload(options); // Passa options de novo se tiver transação
+            //     console.log("[createTransaction] Transação recarregada. ID:", novaTransacao.id_transacao);
+            // } else {
+                 throw new Error("Falha ao obter o objeto da transação após a criação.");
+            // }
         }
-        throw error; // Re-lança para a rota tratar
+
+        return novaTransacao; // Retorna o objeto criado
+
+    } catch (error) {
+        // LOG 6: Se ocorrer um erro em qualquer ponto do try
+        console.error("[createTransaction] Erro durante a execução:", error);
+        // Tenta logar detalhes específicos do erro do Sequelize/DB
+         if (error.name === 'SequelizeUniqueConstraintError') {
+            console.error("[createTransaction] Erro de Violação Única:", error.errors);
+        } else if (error.name === 'SequelizeValidationError') {
+             console.error("[createTransaction] Erro de Validação:", error.errors);
+        } else if (error.original) {
+            console.error("[createTransaction] Erro Original do DB:", error.original);
+            console.error("[createTransaction] SQL do Erro (se disponível):", error.sql);
+        }
+        // Re-lança o erro para a camada superior (updateStatusByCode ou rota) tratar
+        // Isso é importante para que o rollback da transação externa ocorra
+        throw error;
     }
 };
+
 
 /**
  * Lista transações com filtros opcionais de período e tipo.

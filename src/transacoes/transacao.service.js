@@ -1,16 +1,16 @@
 // src/transacoes/transacao.service.js
 const Transacao = require('./transacao.model');
-const sequelize = require('../config/database'); // Necessário para query bruta do balance
-const { Sequelize } = require('sequelize'); // Necessário para Sequelize.Op e QueryTypes
-const Usuario = require('../usuarios/usuario.model'); // Necessário para include em algumas consultas
-const { nanoid } = require('nanoid'); // Para gerar código único
+const sequelize = require('../config/database');
+const { Sequelize, Op } = require('sequelize'); // Importar Op se usar em listTransactions etc.
+const Usuario = require('../usuarios/usuario.model');
+const { nanoid } = require('nanoid');
 
 // --- Função Helper para Gerar Código Único de Transação ---
 const generateUniqueTransactionCode = async () => {
     let code;
     let existing = true;
-    let safetyCount = 0; // Segurança contra loops infinitos
-    while (existing && safetyCount < 10) { // Tenta no máximo 10 vezes
+    let safetyCount = 0;
+    while (existing && safetyCount < 10) {
         safetyCount++;
         code = `TRX-${nanoid(7)}`;
         try {
@@ -18,10 +18,10 @@ const generateUniqueTransactionCode = async () => {
              if(existing) console.warn(`[generateUniqueTransactionCode] Colisão detectada para ${code}. Tentando novamente (${safetyCount})...`);
         } catch (findError){
              console.error("[generateUniqueTransactionCode] Erro ao verificar existência do código:", findError);
-             throw findError; // Aborta se não consegue verificar
+             throw findError;
         }
     }
-     if (existing) { // Se ainda existe após 10 tentativas
+     if (existing) {
          throw new Error("Não foi possível gerar um código único de transação após várias tentativas.");
      }
     return code;
@@ -29,7 +29,7 @@ const generateUniqueTransactionCode = async () => {
 // ---------------------------------------------------------
 
 
-// --- Função Helper para Calcular Data de Início (Usada em listTransactions) ---
+// --- Função Helper para Calcular Data de Início ---
 function calcularStartDate(periodoInput) {
     let startDate = null;
     const hoje = new Date();
@@ -55,28 +55,24 @@ function calcularStartDate(periodoInput) {
                 break;
             case 'semana_atual':
                 startDate = new Date(hoje);
-                const diaSemana = hoje.getDay(); // 0 = Domingo, 1 = Segunda, ...
-                const diff = hoje.getDate() - diaSemana + (diaSemana === 0 ? -6 : 1); // Ajusta para segunda-feira
+                const diaSemana = hoje.getDay();
+                const diff = hoje.getDate() - diaSemana + (diaSemana === 0 ? -6 : 1);
                 startDate.setDate(diff);
                 break;
             case 'semana_passada':
                  startDate = new Date(hoje);
                  const diaSemanaPassada = hoje.getDay();
-                 // Vai para a segunda da semana atual e subtrai 7 dias
                  const diffParaSegunda = hoje.getDate() - diaSemanaPassada + (diaSemanaPassada === 0 ? -6 : 1);
                  startDate.setDate(diffParaSegunda - 7);
                  break;
-            // Adicionar mais casos como ano_atual, ultimos_X_dias se necessário
             default:
-                // Tenta interpretar como YYYY-MM-DD
                 if (/^\d{4}-\d{2}-\d{2}$/.test(periodoInput)) {
-                    // Usa UTC para evitar problemas de timezone ao criar a data apenas com ano, mês, dia
                      startDate = new Date(Date.UTC(
                         parseInt(periodoInput.substring(0, 4)),
-                        parseInt(periodoInput.substring(5, 7)) - 1, // Mês é 0-indexado
+                        parseInt(periodoInput.substring(5, 7)) - 1,
                         parseInt(periodoInput.substring(8, 10))
                     ));
-                    if (isNaN(startDate.getTime())) { // Verifica se a data resultante é válida
+                    if (isNaN(startDate.getTime())) {
                          console.warn(`[API LOG] Data inválida fornecida em calcularStartDate: ${periodoInput}. Usando início do mês.`);
                          startDate = new Date(hoje.getFullYear(), hoje.getMonth(), 1);
                     }
@@ -87,7 +83,6 @@ function calcularStartDate(periodoInput) {
                 break;
         }
 
-         // Verificação final de segurança
         if (!(startDate instanceof Date && !isNaN(startDate))) {
             console.error(`[API LOG] Data Inválida calculada para período "${periodoInput}". Usando início do mês.`);
             startDate = new Date(hoje.getFullYear(), hoje.getMonth(), 1);
@@ -97,30 +92,15 @@ function calcularStartDate(periodoInput) {
          console.error(`[API LOG] Erro em calcularStartDate para período "${periodoInput}":`, dateError, "Usando início do mês.");
          startDate = new Date(hoje.getFullYear(), hoje.getMonth(), 1);
     }
-
-    // console.log(`[API LOG] calcularStartDate para "${periodoInput}" resultou em: ${startDate?.toISOString()}`);
     return startDate;
 }
 // ---------------------------------------------------------------------------
-
 
 /**
  * Cria uma nova transação.
  * O codigo_unico é gerado automaticamente.
  * @param {object} dadosTransacao - Objeto contendo os dados da transação.
- * @param {number} dadosTransacao.id_usuario - ID do usuário.
- * @param {'despesa'|'receita'} dadosTransacao.tipo - Tipo da transação.
- * @param {number} dadosTransacao.valor - Valor da transação.
- * @param {string} dadosTransacao.data_transacao - Data da transação (YYYY-MM-DD).
- * @param {string} [dadosTransacao.nome_categoria] - Nome da categoria.
- * @param {string} [dadosTransacao.descricao] - Descrição.
- * @param {string} [dadosTransacao.comprovante_url] - URL do comprovante.
- * @param {number} [dadosTransacao.id_transacao_pai] - ID da transação pai (parcelas).
- * @param {number} [dadosTransacao.parcela_numero] - Número da parcela.
- * @param {number} [dadosTransacao.total_parcelas] - Total de parcelas.
- * @param {number} [dadosTransacao.id_recorrencia_origem] - ID da recorrência (opcional).
- * @param {string} [dadosTransacao.data_ocorrencia_recorrencia] - Data da ocorrência (opcional).
- * @param {number} [dadosTransacao.id_alerta_origem] - ID do alerta que originou (opcional).
+ * @param {object} [options] - Opções do Sequelize (ex: { transaction: t }).
  * @returns {Promise<Transacao>} A transação criada.
  */
 const createTransaction = async (dadosTransacao, options = {}) => {
@@ -137,33 +117,52 @@ const createTransaction = async (dadosTransacao, options = {}) => {
         // LOG 3: Após gerar código único
         console.log("[createTransaction] Código único gerado:", codigo_unico_gerado);
 
-        // Prepara o objeto final para criação
+        // Prepara o objeto final para criação, ajustando tipos
         const dadosParaCriar = {
-            ...dadosTransacao, // Inclui id_usuario, tipo, valor, id_alerta_origem etc.
-            codigo_unico: codigo_unico_gerado, // Adiciona o código gerado
+            // Garante que IDs sejam números inteiros
+            id_usuario: parseInt(dadosTransacao.id_usuario, 10),
+            id_alerta_origem: dadosTransacao.id_alerta_origem ? parseInt(dadosTransacao.id_alerta_origem, 10) : null,
+            id_transacao_pai: dadosTransacao.id_transacao_pai ? parseInt(dadosTransacao.id_transacao_pai, 10) : null,
+            parcela_numero: dadosTransacao.parcela_numero ? parseInt(dadosTransacao.parcela_numero, 10) : null,
+            total_parcelas: dadosTransacao.total_parcelas ? parseInt(dadosTransacao.total_parcelas, 10) : null,
+            id_recorrencia_origem: dadosTransacao.id_recorrencia_origem ? parseInt(dadosTransacao.id_recorrencia_origem, 10) : null,
+
+            // Garante que valor seja número float
+            valor: parseFloat(dadosTransacao.valor),
+
+            // Mantém strings como estão (ou null se ausentes)
+            tipo: dadosTransacao.tipo,
+            nome_categoria: dadosTransacao.nome_categoria || null,
+            data_transacao: dadosTransacao.data_transacao, // Assume que já está YYYY-MM-DD
+            data_ocorrencia_recorrencia: dadosTransacao.data_ocorrencia_recorrencia || null,
+            descricao: dadosTransacao.descricao || null,
+            comprovante_url: dadosTransacao.comprovante_url || null,
+
+            // Adiciona o código único gerado
+            codigo_unico: codigo_unico_gerado,
         };
 
+        // Validação extra de tipos (opcional)
+        if (isNaN(dadosParaCriar.id_usuario)) throw new Error("ID de usuário inválido fornecido para createTransaction.");
+        if (isNaN(dadosParaCriar.valor)) throw new Error("Valor inválido fornecido para createTransaction.");
+        // Adicione outras validações de tipo se necessário
+
+        // Remove chaves com valor explicitamente null se o banco não gostar ou para limpeza
+        // (Sequelize geralmente lida bem com null, então isso pode não ser necessário)
+        // Object.keys(dadosParaCriar).forEach(key => (dadosParaCriar[key] === null) && delete dadosParaCriar[key]);
+
         // LOG 4: Antes de chamar Transacao.create
-        console.log("[createTransaction] Chamando Transacao.create com:", JSON.stringify(dadosParaCriar, null, 2));
+        console.log("[createTransaction] Chamando Transacao.create com (tipos ajustados):", JSON.stringify(dadosParaCriar, null, 2));
 
         // Chama Transacao.create passando os dados e as opções (que podem conter a transação)
         const novaTransacao = await Transacao.create(dadosParaCriar, options);
 
         // LOG 5: Após chamar Transacao.create
-        // Verifica se o objeto retornado é válido e loga o ID
         if (novaTransacao && novaTransacao.id_transacao) {
             console.log(`[createTransaction] Transacao.create SUCESSO. ID da Nova Transação: ${novaTransacao.id_transacao}`);
         } else {
-             // Isso não deveria acontecer se o create funcionou, mas é uma checagem extra
             console.warn("[createTransaction] Transacao.create retornou um valor inesperado:", novaTransacao);
-            // Tentar recarregar pode ajudar em casos estranhos, mas indica um problema
-            // if (novaTransacao && typeof novaTransacao.reload === 'function') {
-            //     console.log("[createTransaction] Tentando recarregar a transação...");
-            //     await novaTransacao.reload(options); // Passa options de novo se tiver transação
-            //     console.log("[createTransaction] Transação recarregada. ID:", novaTransacao.id_transacao);
-            // } else {
-                 throw new Error("Falha ao obter o objeto da transação após a criação.");
-            // }
+            throw new Error("Falha ao obter o objeto da transação após a criação.");
         }
 
         return novaTransacao; // Retorna o objeto criado
@@ -171,7 +170,6 @@ const createTransaction = async (dadosTransacao, options = {}) => {
     } catch (error) {
         // LOG 6: Se ocorrer um erro em qualquer ponto do try
         console.error("[createTransaction] Erro durante a execução:", error);
-        // Tenta logar detalhes específicos do erro do Sequelize/DB
          if (error.name === 'SequelizeUniqueConstraintError') {
             console.error("[createTransaction] Erro de Violação Única:", error.errors);
         } else if (error.name === 'SequelizeValidationError') {
@@ -180,83 +178,63 @@ const createTransaction = async (dadosTransacao, options = {}) => {
             console.error("[createTransaction] Erro Original do DB:", error.original);
             console.error("[createTransaction] SQL do Erro (se disponível):", error.sql);
         }
-        // Re-lança o erro para a camada superior (updateStatusByCode ou rota) tratar
-        // Isso é importante para que o rollback da transação externa ocorra
-        throw error;
+        throw error; // Re-lança para a camada superior
     }
 };
 
-
-/**
- * Lista transações com filtros opcionais de período e tipo.
- * @param {number} id_usuario - ID do usuário.
- * @param {string} [filtroPeriodo] - String normalizada ('hoje', 'mes_atual', 'YYYY-MM-DD') ou null.
- * @param {'despesa'|'receita'} [tipoFiltro] - Filtra por tipo se fornecido.
- * @param {object} [additionalFilters] - Outros filtros diretos (ex: { id_alerta_origem: 1 }).
- * @returns {Promise<Transacao[]>} Lista de transações.
- */
 const listTransactions = async (id_usuario, filtroPeriodo = null, tipoFiltro = null, additionalFilters = {}) => {
-    const whereClause = { id_usuario, ...additionalFilters }; // Começa com id_usuario e filtros adicionais
+    const whereClause = { ...additionalFilters }; // Começa com filtros adicionais
+     // Garante que id_usuario seja número
+     const userIdNum = parseInt(id_usuario, 10);
+     if(isNaN(userIdNum)) {
+         throw new Error("ID de usuário inválido fornecido para listTransactions.");
+     }
+     whereClause.id_usuario = userIdNum;
+
 
     if (filtroPeriodo) {
-        // Verifica se é um objeto com startDate e endDate (vindo da IA)
         if (typeof filtroPeriodo === 'object' && filtroPeriodo.startDate && filtroPeriodo.endDate) {
-            const startDate = new Date(Date.UTC(
-                parseInt(filtroPeriodo.startDate.substring(0, 4)),
-                parseInt(filtroPeriodo.startDate.substring(5, 7)) - 1,
-                parseInt(filtroPeriodo.startDate.substring(8, 10))
-             ));
-            const endDate = new Date(Date.UTC(
-                 parseInt(filtroPeriodo.endDate.substring(0, 4)),
-                 parseInt(filtroPeriodo.endDate.substring(5, 7)) - 1,
-                 parseInt(filtroPeriodo.endDate.substring(8, 10))
-             ));
-             // Garante que endDate inclua o dia inteiro
-             endDate.setUTCHours(23, 59, 59, 999);
-
-            if (!isNaN(startDate.getTime()) && !isNaN(endDate.getTime())) {
-                whereClause.data_transacao = { [Sequelize.Op.between]: [startDate, endDate] };
-            } else {
-                 console.warn(`[API LOG] Datas inválidas no objeto periodo: ${JSON.stringify(filtroPeriodo)}`);
-                 // Fallback para início do mês atual se as datas forem inválidas
-                 whereClause.data_transacao = { [Sequelize.Op.gte]: calcularStartDate('mes_atual') };
-            }
-
+            // Validação básica das datas recebidas no objeto
+            if (/\d{4}-\d{2}-\d{2}/.test(filtroPeriodo.startDate) && /\d{4}-\d{2}-\d{2}/.test(filtroPeriodo.endDate)) {
+                 // Assume UTC para evitar problemas de timezone com datas simples
+                const startDate = new Date(filtroPeriodo.startDate + 'T00:00:00Z');
+                const endDate = new Date(filtroPeriodo.endDate + 'T23:59:59.999Z');
+                 if (!isNaN(startDate.getTime()) && !isNaN(endDate.getTime())) {
+                     whereClause.data_transacao = { [Op.between]: [startDate, endDate] };
+                 } else {
+                      console.warn(`[API LOG] Datas inválidas no objeto periodo: ${JSON.stringify(filtroPeriodo)}`);
+                 }
+             } else {
+                  console.warn(`[API LOG] Formato de data inválido no objeto periodo: ${JSON.stringify(filtroPeriodo)}`);
+             }
         } else if (typeof filtroPeriodo === 'string') {
-             // Usa a função helper para strings normalizadas ('hoje', 'mes_atual', etc.)
             const startDateCalculada = calcularStartDate(filtroPeriodo);
             if (startDateCalculada instanceof Date && !isNaN(startDateCalculada)) {
-                 // Para períodos como 'hoje', 'ontem', a data já é exata.
-                 // Para 'mes_atual', 'semana_atual', etc., pegamos >= startDate.
-                 // Se for 'semana_passada', precisamos calcular endDate também.
-                 if (filtroPeriodo === 'semana_passada'){
-                     const endDateCalculada = new Date(startDateCalculada);
-                     endDateCalculada.setDate(startDateCalculada.getDate() + 6);
-                     endDateCalculada.setHours(23,59,59,999);
-                     whereClause.data_transacao = { [Sequelize.Op.between]: [startDateCalculada, endDateCalculada] };
-                 } else if (['hoje', 'ontem'].includes(filtroPeriodo)) {
-                     const endDateCalculada = new Date(startDateCalculada);
-                     endDateCalculada.setHours(23,59,59,999);
-                     whereClause.data_transacao = { [Sequelize.Op.between]: [startDateCalculada, endDateCalculada] };
-                 }
-                 else {
-                     whereClause.data_transacao = { [Sequelize.Op.gte]: startDateCalculada };
+                 const endDateCalculada = new Date(startDateCalculada);
+                 endDateCalculada.setHours(23, 59, 59, 999); // Fim do dia
+
+                 if (['hoje', 'ontem'].includes(filtroPeriodo.toLowerCase())) {
+                     whereClause.data_transacao = { [Op.between]: [startDateCalculada, endDateCalculada] };
+                 } else if (filtroPeriodo.toLowerCase() === 'semana_passada'){
+                     // startDateCalculada já é segunda da semana passada
+                     endDateCalculada.setDate(startDateCalculada.getDate() + 6); // Adiciona 6 dias para chegar a domingo
+                      whereClause.data_transacao = { [Op.between]: [startDateCalculada, endDateCalculada] };
+                 } else { // Para mes_atual, semana_atual, etc., pega do início calculado em diante
+                     whereClause.data_transacao = { [Op.gte]: startDateCalculada };
                  }
             }
         }
     }
 
-    // Adiciona o filtro de tipo SE ele for fornecido e válido
     if (tipoFiltro && ['receita', 'despesa'].includes(tipoFiltro)) {
         whereClause.tipo = tipoFiltro;
     }
 
     try {
+         console.log("[listTransactions] Where clause final:", JSON.stringify(whereClause, null, 2));
         const transacoes = await Transacao.findAll({
             where: whereClause,
-            // Include opcional para trazer dados do usuário ou alerta/recorrência
-            // include: [{ model: Usuario, as: 'usuario' }],
-            order: [['data_transacao', 'DESC'], ['id_transacao', 'DESC']] // Ordena por data e depois ID
+            order: [['data_transacao', 'DESC'], ['id_transacao', 'DESC']]
         });
         return transacoes;
     } catch (error) {
@@ -265,57 +243,46 @@ const listTransactions = async (id_usuario, filtroPeriodo = null, tipoFiltro = n
     }
 };
 
-/**
- * Busca uma transação pelo seu ID (PK).
- * @param {number} id_transacao - ID da transação.
- * @returns {Promise<Transacao|null>} A transação encontrada ou null.
- */
 const getTransactionById = async (id_transacao) => {
     try {
-        const transacao = await Transacao.findByPk(id_transacao, {
-            // Include opcional
-            // include: [{ model: Usuario, as: 'usuario' }]
-        });
+        const transacao = await Transacao.findByPk(id_transacao);
         return transacao;
     } catch (error) {
-        console.error("Erro ao obter transação por ID:", error);
+        console.error(`Erro ao obter transação por ID ${id_transacao}:`, error);
         throw error;
     }
 };
 
-/**
- * Atualiza uma transação existente.
- * @param {number} id_transacao - ID da transação.
- * @param {object} updates - Campos a serem atualizados.
- * @returns {Promise<Transacao|null>} A transação atualizada ou null.
- */
 const updateTransaction = async (id_transacao, updates) => {
     try {
         const transacao = await Transacao.findByPk(id_transacao);
         if (!transacao) {
-            return null; // Não encontrada
+            return null;
         }
 
-        // Remover campos que não devem ser atualizados diretamente pela rota PUT padrão
+        // Limpa updates
         delete updates.id_usuario;
         delete updates.id_transacao;
-        delete updates.codigo_unico; // Código único não deve ser alterado
-        delete updates.id_alerta_origem; // Vínculo com alerta não deve ser alterado por aqui
-        delete updates.id_recorrencia_origem; // Vínculo com recorrência não deve ser alterado
+        delete updates.codigo_unico;
+        delete updates.id_alerta_origem;
+        delete updates.id_recorrencia_origem;
+
+        // Converte valor para float se presente
+        if (updates.valor !== undefined) {
+            updates.valor = parseFloat(updates.valor);
+             if (isNaN(updates.valor)) {
+                 throw new Error("Valor inválido fornecido para atualização da transação.");
+             }
+        }
 
         await transacao.update(updates);
         return transacao;
     } catch (error) {
-        console.error("Erro ao atualizar transação:", error);
+        console.error(`Erro ao atualizar transação ${id_transacao}:`, error);
         throw error;
     }
 };
 
-/**
- * Deleta uma transação pelo seu ID (PK).
- * @param {number} id_transacao - ID da transação.
- * @returns {Promise<boolean>} True se deletado, false caso contrário.
- */
 const deleteTransaction = async (id_transacao) => {
     try {
         const transacaoDeletadaCount = await Transacao.destroy({
@@ -323,308 +290,244 @@ const deleteTransaction = async (id_transacao) => {
         });
         return transacaoDeletadaCount > 0;
     } catch (error) {
-        console.error("Erro ao excluir transação por ID:", error);
+        console.error(`Erro ao excluir transação por ID ${id_transacao}:`, error);
         throw error;
     }
 };
 
-/**
- * Deleta uma transação pelo seu código único e ID do usuário.
- * @param {string} codigo_unico - Código único da transação.
- * @param {number} id_usuario - ID do usuário proprietário.
- * @returns {Promise<boolean>} True se deletado, false caso contrário.
- */
 const deleteTransactionByCode = async (codigo_unico, id_usuario) => {
+     // Garante que id_usuario seja número
+     const userIdNum = parseInt(id_usuario, 10);
+     if(isNaN(userIdNum)) {
+         throw new Error("ID de usuário inválido fornecido para deleteTransactionByCode.");
+     }
     try {
         const transacaoDeletadaCount = await Transacao.destroy({
             where: {
                 codigo_unico: codigo_unico,
-                id_usuario: id_usuario // Garante que só o dono delete
+                id_usuario: userIdNum
             }
         });
         return transacaoDeletadaCount > 0;
     } catch (error) {
-        console.error("Erro ao excluir transação por código:", error);
+        console.error(`Erro ao excluir transação por código ${codigo_unico} para usuário ${id_usuario}:`, error);
         throw error;
     }
 };
 
-/**
- * Calcula o saldo atual do usuário.
- * @param {number} id_usuario - ID do usuário.
- * @returns {Promise<number>} O saldo atual.
- */
 const getCurrentBalance = async (id_usuario) => {
+    const userIdNum = parseInt(id_usuario, 10);
+     if(isNaN(userIdNum)) {
+         throw new Error("ID de usuário inválido fornecido para getCurrentBalance.");
+     }
     try {
-        // Usando agregações do Sequelize para performance
-        const receitas = await Transacao.sum('valor', { where: { id_usuario: id_usuario, tipo: 'receita' } });
-        const despesas = await Transacao.sum('valor', { where: { id_usuario: id_usuario, tipo: 'despesa' } });
+        const receitas = await Transacao.sum('valor', { where: { id_usuario: userIdNum, tipo: 'receita' } });
+        const despesas = await Transacao.sum('valor', { where: { id_usuario: userIdNum, tipo: 'despesa' } });
 
-        // Sequelize sum retorna null se não houver registros, então tratamos como 0
         const totalReceitas = receitas || 0;
         const totalDespesas = despesas || 0;
 
         const balance = parseFloat(totalReceitas) - parseFloat(totalDespesas);
-
-        // Retorna com 2 casas decimais
         return parseFloat(balance.toFixed(2));
 
     } catch (error) {
-        console.error("Erro ao obter saldo atual:", error);
+        console.error(`Erro ao obter saldo atual para usuário ${id_usuario}:`, error);
         throw error;
     }
 };
 
-
-/**
- * Gera um resumo financeiro para um mês/ano específico.
- * @param {number} id_usuario - ID do usuário.
- * @param {number} year - Ano.
- * @param {number} month - Mês (1-12).
- * @returns {Promise<object>} Objeto com totalIncome, totalExpenses e categorySummary.
- */
 const getMonthlySummary = async (id_usuario, year, month) => {
+     const userIdNum = parseInt(id_usuario, 10);
+     const yearNum = parseInt(year, 10);
+     const monthNum = parseInt(month, 10); // 1-12
+
+     if(isNaN(userIdNum) || isNaN(yearNum) || isNaN(monthNum) || monthNum < 1 || monthNum > 12) {
+          throw new Error("Parâmetros inválidos para getMonthlySummary.");
+     }
+
     try {
-        // Cria datas UTC para evitar problemas de timezone
-        const startDate = new Date(Date.UTC(year, month - 1, 1)); // Primeiro dia do mês
-        const endDate = new Date(Date.UTC(year, month, 1)); // Primeiro dia do próximo mês
-        endDate.setUTCMilliseconds(endDate.getUTCMilliseconds() - 1); // Último milissegundo do mês
+        const startDate = new Date(Date.UTC(yearNum, monthNum - 1, 1));
+        const endDate = new Date(Date.UTC(yearNum, monthNum, 1));
+        endDate.setUTCMilliseconds(-1);
 
         const transacoes = await Transacao.findAll({
             where: {
-                id_usuario: id_usuario,
+                id_usuario: userIdNum,
                 data_transacao: {
-                    [Sequelize.Op.between]: [startDate, endDate]
+                    [Op.between]: [startDate.toISOString().split('T')[0], endDate.toISOString().split('T')[0]]
                 }
             },
-            attributes: ['tipo', 'valor', 'nome_categoria'] // Pega só o necessário
+            attributes: ['tipo', 'valor', 'nome_categoria']
         });
 
-        let summary = {
-            totalIncome: 0,
-            totalExpenses: 0,
-            categorySummary: {} // Agrupa pelo nome da categoria
-        };
+        let summary = { totalIncome: 0, totalExpenses: 0, categorySummary: {} };
 
         transacoes.forEach(transacao => {
-            const valorNum = parseFloat(transacao.valor) || 0; // Garante que é número
-
+            const valorNum = parseFloat(transacao.valor) || 0;
             if (transacao.tipo === 'receita') {
                 summary.totalIncome += valorNum;
-            } else { // Despesa
+            } else {
                 summary.totalExpenses += valorNum;
-                // Agrupa despesas por categoria
                 const categoryName = transacao.nome_categoria || 'Sem Categoria';
                 summary.categorySummary[categoryName] = (summary.categorySummary[categoryName] || 0) + valorNum;
             }
         });
 
-        // Arredonda os totais
         summary.totalIncome = parseFloat(summary.totalIncome.toFixed(2));
         summary.totalExpenses = parseFloat(summary.totalExpenses.toFixed(2));
-        // Arredonda os totais das categorias
         for (const category in summary.categorySummary) {
             summary.categorySummary[category] = parseFloat(summary.categorySummary[category].toFixed(2));
         }
-
-
         return summary;
     } catch (error) {
-        console.error("Erro ao obter resumo mensal:", error);
+        console.error(`Erro ao obter resumo mensal para ${id_usuario}/${year}-${month}:`, error);
         throw error;
     }
 };
 
-/**
- * Gera um resumo financeiro para um dia específico.
- * @param {number} id_usuario - ID do usuário.
- * @param {number} year - Ano.
- * @param {number} month - Mês (1-12).
- * @param {number} day - Dia.
- * @returns {Promise<object>} Objeto com totalIncome, totalExpenses e lista de transações do dia.
- */
 const getDailySummary = async (id_usuario, year, month, day) => {
+     const userIdNum = parseInt(id_usuario, 10);
+     // Add validation for year, month, day
+      if(isNaN(userIdNum) /*... add other checks ...*/) {
+           throw new Error("Parâmetros inválidos para getDailySummary.");
+      }
     try {
         const startOfDay = new Date(Date.UTC(year, month - 1, day, 0, 0, 0, 0));
         const endOfDay = new Date(Date.UTC(year, month - 1, day, 23, 59, 59, 999));
 
         const transacoes = await Transacao.findAll({
             where: {
-                id_usuario: id_usuario,
+                id_usuario: userIdNum,
                 data_transacao: {
-                    [Sequelize.Op.between]: [startOfDay, endOfDay]
+                    [Op.between]: [startOfDay.toISOString().split('T')[0], endOfDay.toISOString().split('T')[0]]
                 }
             },
-            order: [['id_transacao', 'ASC']] // Ou pela hora se tivesse timestamp
+            order: [['id_transacao', 'ASC']]
         });
 
-        let dailySummary = {
-            totalIncome: 0,
-            totalExpenses: 0,
-            transactions: transacoes // Retorna as transações do dia
-        };
+        let dailySummary = { totalIncome: 0, totalExpenses: 0, transactions: transacoes };
 
         transacoes.forEach(transacao => {
             const valorNum = parseFloat(transacao.valor) || 0;
-            if (transacao.tipo === 'receita') {
-                dailySummary.totalIncome += valorNum;
-            } else {
-                dailySummary.totalExpenses += valorNum;
-            }
+            if (transacao.tipo === 'receita') { dailySummary.totalIncome += valorNum; } else { dailySummary.totalExpenses += valorNum; }
         });
 
         dailySummary.totalIncome = parseFloat(dailySummary.totalIncome.toFixed(2));
         dailySummary.totalExpenses = parseFloat(dailySummary.totalExpenses.toFixed(2));
-
         return dailySummary;
 
     } catch (error) {
-        console.error("Erro ao obter resumo diário:", error);
+        console.error(`Erro ao obter resumo diário para ${id_usuario}/${year}-${month}-${day}:`, error);
         throw error;
     }
 };
 
-/**
- * Gera um resumo financeiro para uma semana específica do ano.
- * Assume semana começando na Segunda-feira.
- * @param {number} id_usuario - ID do usuário.
- * @param {number} year - Ano.
- * @param {number} week - Número da semana no ano (ISO 8601 week number seria ideal, mas vamos simplificar).
- * @returns {Promise<object>} Objeto com totalIncome, totalExpenses, startDate e endDate da semana.
- */
 const getWeeklySummary = async (id_usuario, year, week) => {
+     const userIdNum = parseInt(id_usuario, 10);
+     // Add validation for year, week
+      if(isNaN(userIdNum) /*... add other checks ...*/) {
+           throw new Error("Parâmetros inválidos para getWeeklySummary.");
+      }
     try {
-        // Calcula o início da semana (Segunda-feira)
-        // Cria a data do primeiro dia do ano
         const firstDayOfYear = new Date(Date.UTC(year, 0, 1));
-        // Calcula quantos dias adicionar para chegar à semana desejada (considerando semana 1 pode começar antes)
-        // Adiciona (week - 1) * 7 dias ao primeiro dia do ano
         const dateInWeek = new Date(firstDayOfYear.getTime());
         dateInWeek.setUTCDate(firstDayOfYear.getUTCDate() + (week - 1) * 7);
-
-        // Ajusta para a Segunda-feira daquela semana
-        const dayOfWeek = dateInWeek.getUTCDay(); // 0 = Domingo, 1 = Segunda ... 6 = Sábado
-        const diffToMonday = dateInWeek.getUTCDate() - dayOfWeek + (dayOfWeek === 0 ? -6 : 1); // Ajuste para segunda
+        const dayOfWeek = dateInWeek.getUTCDay();
+        const diffToMonday = dateInWeek.getUTCDate() - dayOfWeek + (dayOfWeek === 0 ? -6 : 1);
         const startDate = new Date(dateInWeek.setUTCDate(diffToMonday));
-        startDate.setUTCHours(0,0,0,0); // Garante início do dia
+        startDate.setUTCHours(0,0,0,0);
 
-        // Calcula o fim da semana (Domingo)
         const endDate = new Date(startDate);
-        endDate.setUTCDate(startDate.getUTCDate() + 6); // Adiciona 6 dias
-        endDate.setUTCHours(23, 59, 59, 999); // Garante fim do dia
-
+        endDate.setUTCDate(startDate.getUTCDate() + 6);
+        endDate.setUTCHours(23, 59, 59, 999);
 
         const transacoes = await Transacao.findAll({
             where: {
-                id_usuario: id_usuario,
+                id_usuario: userIdNum,
                 data_transacao: {
-                    [Sequelize.Op.between]: [startDate, endDate]
+                    [Op.between]: [startDate.toISOString().split('T')[0], endDate.toISOString().split('T')[0]]
                 }
             },
              attributes: ['tipo', 'valor']
         });
 
-        let weeklySummary = {
-            totalIncome: 0,
-            totalExpenses: 0,
-            startDate: startDate.toISOString().split('T')[0], // Formata YYYY-MM-DD
-            endDate: endDate.toISOString().split('T')[0]     // Formata YYYY-MM-DD
-        };
+        let weeklySummary = { totalIncome: 0, totalExpenses: 0, startDate: startDate.toISOString().split('T')[0], endDate: endDate.toISOString().split('T')[0] };
 
         transacoes.forEach(transacao => {
              const valorNum = parseFloat(transacao.valor) || 0;
-            if (transacao.tipo === 'receita') {
-                weeklySummary.totalIncome += valorNum;
-            } else {
-                weeklySummary.totalExpenses += valorNum;
-            }
+            if (transacao.tipo === 'receita') { weeklySummary.totalIncome += valorNum; } else { weeklySummary.totalExpenses += valorNum; }
         });
 
         weeklySummary.totalIncome = parseFloat(weeklySummary.totalIncome.toFixed(2));
         weeklySummary.totalExpenses = parseFloat(weeklySummary.totalExpenses.toFixed(2));
-
         return weeklySummary;
 
     } catch (error) {
-        console.error("Erro ao obter resumo semanal:", error);
+        console.error(`Erro ao obter resumo semanal para ${id_usuario}/Y${year}-W${week}:`, error);
         throw error;
     }
 };
 
-/**
- * Obtém o total de gastos agrupados por categoria para um período.
- * @param {number} id_usuario - ID do usuário.
- * @param {Date} startDate - Data de início do período.
- * @param {Date} endDate - Data de fim do período.
- * @returns {Promise<Array<{nome: string, total: number}>>} Array com nome da categoria e total gasto.
- */
 const getSpendingByCategory = async (id_usuario, startDate, endDate) => {
+     const userIdNum = parseInt(id_usuario, 10);
+      if(isNaN(userIdNum) || !(startDate instanceof Date) || !(endDate instanceof Date)) {
+           throw new Error("Parâmetros inválidos para getSpendingByCategory.");
+      }
     try {
-        // Garante que endDate inclua o dia inteiro
         const endOfDayEndDate = new Date(endDate);
-        endOfDayEndDate.setHours(23, 59, 59, 999); // Use setHours ou setUTCHours dependendo da consistência
+        endOfDayEndDate.setHours(23, 59, 59, 999);
 
         const results = await Transacao.findAll({
             attributes: [
-                // Se nome_categoria pode ser nulo, use COALESCE
                 [sequelize.fn('COALESCE', sequelize.col('nome_categoria'), 'Sem Categoria'), 'categoria'],
                 [sequelize.fn('SUM', sequelize.col('valor')), 'total']
             ],
             where: {
-                id_usuario: id_usuario,
-                tipo: 'despesa', // Apenas despesas
+                id_usuario: userIdNum,
+                tipo: 'despesa',
                 data_transacao: {
-                    [Sequelize.Op.between]: [startDate, endOfDayEndDate]
+                    [Op.between]: [startDate.toISOString().split('T')[0], endOfDayEndDate.toISOString().split('T')[0]]
                 }
             },
-            group: [sequelize.fn('COALESCE', sequelize.col('nome_categoria'), 'Sem Categoria')], // Agrupa por nome_categoria
-            order: [[sequelize.fn('SUM', sequelize.col('valor')), 'DESC']], // Ordena por maior gasto
-            raw: true // Retorna resultados brutos (objetos simples)
+            group: [sequelize.literal('categoria')], // Agrupa pelo alias 'categoria'
+            order: [[sequelize.literal('total'), 'DESC']], // Ordena pelo alias 'total'
+            raw: true
         });
 
-        // Formata a saída para { nome: 'NomeCategoria', total: 123.45 }
         const formattedSpending = results.map(item => ({
              nome: item.categoria,
-             total: parseFloat(parseFloat(item.total).toFixed(2)) // Garante número e 2 casas decimais
+             total: parseFloat(parseFloat(item.total).toFixed(2))
         }));
-
         return formattedSpending;
 
     } catch (error) {
-        console.error("Erro ao obter gastos por categoria:", error);
+        console.error(`Erro ao obter gastos por categoria para usuário ${id_usuario}:`, error);
         throw error;
     }
 };
 
-
-/**
- * Obtém o extrato de transações para um período.
- * @param {number} id_usuario - ID do usuário.
- * @param {Date} startDate - Data de início do período.
- * @param {Date} endDate - Data de fim do período.
- * @returns {Promise<Transacao[]>} Lista de transações ordenadas por data.
- */
 const getTransactionStatement = async (id_usuario, startDate, endDate) => {
+     const userIdNum = parseInt(id_usuario, 10);
+      if(isNaN(userIdNum) || !(startDate instanceof Date) || !(endDate instanceof Date)) {
+           throw new Error("Parâmetros inválidos para getTransactionStatement.");
+      }
     try {
-         // Garante que endDate inclua o dia inteiro
         const endOfDayEndDate = new Date(endDate);
-        endOfDayEndDate.setHours(23, 59, 59, 999); // Use setHours ou setUTCHours
+        endOfDayEndDate.setHours(23, 59, 59, 999);
 
         const transacoes = await Transacao.findAll({
             where: {
-                id_usuario: id_usuario,
+                id_usuario: userIdNum,
                 data_transacao: {
-                    [Sequelize.Op.between]: [startDate, endOfDayEndDate]
+                    [Op.between]: [startDate.toISOString().split('T')[0], endOfDayEndDate.toISOString().split('T')[0]]
                 }
             },
-            // Include opcional para mais detalhes no extrato
-            // include: [{ model: AlertaPagamento, as: 'alertaOrigem', attributes: ['codigo_unico'] }],
-            order: [['data_transacao', 'ASC'], ['id_transacao', 'ASC']] // Ordena por data e ID
+            order: [['data_transacao', 'ASC'], ['id_transacao', 'ASC']]
         });
         return transacoes;
 
     } catch (error) {
-        console.error("Erro ao obter extrato de transações:", error);
+        console.error(`Erro ao obter extrato de transações para usuário ${id_usuario}:`, error);
         throw error;
     }
 };
@@ -632,6 +535,7 @@ const getTransactionStatement = async (id_usuario, startDate, endDate) => {
 
 module.exports = {
     createTransaction,
+    // generateUniqueTransactionCode, // Não exportar helper interno
     listTransactions,
     getTransactionById,
     updateTransaction,
@@ -643,5 +547,4 @@ module.exports = {
     getWeeklySummary,
     getSpendingByCategory,
     getTransactionStatement
-    // Não exportar generateUniqueTransactionCode e calcularStartDate, são helpers internos
 };

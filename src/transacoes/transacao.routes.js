@@ -5,26 +5,30 @@ const transacaoService = require('./transacao.service');
 const router = express.Router();
 
 // Rota POST modificada: id_categoria -> nome_categoria
-router.post('/', async (req, res) => {
-    // REMOVER codigo_unico do destructuring
-    const { id_usuario, tipo, valor, nome_categoria, data_transacao, /* REMOVIDO codigo_unico,*/ descricao, comprovante_url, id_transacao_pai, parcela_numero, total_parcelas } = req.body;
+router.post('/', /* authenticateApiKey, */ async (req, res) => {
 
-    if (!id_usuario || !tipo || !valor || !data_transacao) {
-         return res.status(400).json({ error: "Missing required fields for transaction." });
+    // <<< PASSO 1: Pegar TODO o corpo da requisição >>>
+    const dadosRecebidos = { ...req.body };
+
+    // <<< PASSO 2: Validação dos campos OBRIGATÓRIOS dentro do objeto >>>
+    if (!dadosRecebidos.id_usuario || !dadosRecebidos.tipo || dadosRecebidos.valor === undefined || !dadosRecebidos.data_transacao) {
+         return res.status(400).json({ error: "Missing required fields for transaction (id_usuario, tipo, valor, data_transacao)." });
     }
+    // Adicionar mais validações se necessário (tipo válido, formato data, etc.)
 
     try {
-        // Chamada de serviço SEM passar codigo_unico
-        const novaTransacao = await transacaoService.createTransaction(
-            id_usuario, tipo, valor, nome_categoria, data_transacao, /* REMOVIDO */ descricao, comprovante_url, id_transacao_pai, parcela_numero, total_parcelas
-        );
-        // A resposta já contém o código gerado
-        res.status(201).json(novaTransacao); 
+        // <<< PASSO 3: Chamar o service PASSANDO O OBJETO COMPLETO >>>
+        const novaTransacao = await transacaoService.createTransaction(dadosRecebidos);
+
+        // A resposta já contém o código gerado pelo service
+        res.status(201).json(novaTransacao);
     } catch (error) {
+        // <<< PASSO 4: Tratamento de erro >>>
         console.error("Erro na rota POST /transacoes:", error);
-        res.status(500).json({ error: "Internal server error creating transaction." });
+        // Retorna a mensagem específica do erro lançado pelo service
+        res.status(500).json({ error: error.message || "Internal server error creating transaction." });
     }
-})
+});
 
 // Rota GET / com filtro por nome_categoria (ADICIONAL OPCIONAL)
 router.get('/', async (req, res) => {

@@ -5,6 +5,7 @@ const Recorrencia = require('./recorrencia.model');
 const Usuario = require('../usuarios/usuario.model');
 const AlertaPagamento = require('../alertas-pagamento/alerta-pagamento.model');
 const alertaPagamentoService = require('../alertas-pagamento/alerta-pagamento.service');
+const { nanoid } = require('nanoid');
 
 function _calcularProximaDataOcorrencia(recorrencia, aPartirDe) {
     const { frequencia, intervalo = 1, dia_mes, dia_semana, data_inicio } = recorrencia;
@@ -13,17 +14,13 @@ function _calcularProximaDataOcorrencia(recorrencia, aPartirDe) {
 
     const dtInicio = new Date(data_inicio);
     dtInicio.setHours(12, 0, 0, 0);
-    if (proximaData < dtInicio) {
-        proximaData = new Date(dtInicio);
-    }
 
-    // Avança um dia para calcular a *próxima* ocorrência após aPartirDe
     proximaData.setDate(proximaData.getDate() + 1);
     proximaData.setHours(12, 0, 0, 0);
 
 
     let loopSafety = 0;
-    const MAX_LOOPS = 366 * intervalo + 5; // Segurança para pouco mais de 1 ciclo do maior intervalo comum
+    const MAX_LOOPS = 366 * (intervalo || 1) + 5;
 
     while (loopSafety < MAX_LOOPS) {
         loopSafety++;
@@ -34,60 +31,61 @@ function _calcularProximaDataOcorrencia(recorrencia, aPartirDe) {
                 if (!dia_mes) return null;
                 let mesRef = dataCandidata.getMonth();
                 dataCandidata.setDate(dia_mes);
-                // Se setDate pulou para o próximo mês ou data inválida, avança mês base e tenta de novo
-                if (dataCandidata.getMonth() !== mesRef || dataCandidata.getDate() !== dia_mes) {
+
+                if (dataCandidata.getMonth() !== mesRef || dataCandidata < proximaData) {
                     proximaData.setMonth(proximaData.getMonth() + intervalo);
-                    proximaData.setDate(1); // Reinicia no dia 1 para a próxima iteração
+                    proximaData.setDate(1);
                     continue;
                 }
-                return dataCandidata; // Encontrou
+                return dataCandidata;
 
             case 'semanal':
                 const diasMap = { domingo: 0, segunda: 1, terca: 2, quarta: 3, quinta: 4, sexta: 5, sabado: 6 };
                 const diaAlvo = diasMap[dia_semana];
                 if (diaAlvo === undefined) return null;
 
-                // Avança até encontrar o dia da semana correto DENTRO da semana atual ou futuras
                 while (dataCandidata.getDay() !== diaAlvo) {
                     dataCandidata.setDate(dataCandidata.getDate() + 1);
                 }
-                 // Verifica se está na primeira semana válida após o intervalo
-                 // Cálculo complexo de intervalo semanal omitido para simplicidade, assume intervalo 1
-                 return dataCandidata; // Retorna o primeiro dia correto encontrado a partir de proximaData
+
+                if (dataCandidata < proximaData) {
+                    proximaData.setDate(proximaData.getDate() + 7 * intervalo);
+                    continue;
+                }
+                 return dataCandidata;
 
             case 'diaria':
-                dataCandidata.setDate(dataCandidata.getDate() + (intervalo -1)); // Avança o intervalo menos 1 (já avançamos 1 no início)
-                return dataCandidata;
+                 if(intervalo > 1) {
+                    dataCandidata.setDate(proximaData.getDate() + (intervalo - 1));
+                 }
+                 return dataCandidata;
 
             case 'anual':
                  if (!data_inicio) return null;
                  let mesInicio = new Date(data_inicio).getMonth();
                  let diaInicio = new Date(data_inicio).getDate();
-                 // Garante que está no ano correto ou futuro
+
                  if(dataCandidata.getFullYear() < new Date(data_inicio).getFullYear()){
                     dataCandidata.setFullYear(new Date(data_inicio).getFullYear());
                  }
-                 dataCandidata.setMonth(mesInicio, diaInicio); // Tenta definir mês/dia
-                  // Se data ficou no passado, avança N anos
-                 while (dataCandidata < aPartirDe || dataCandidata < dtInicio) {
-                     dataCandidata.setFullYear(dataCandidata.getFullYear() + intervalo);
-                     dataCandidata.setMonth(mesInicio, diaInicio); // Garante mês/dia
+                 dataCandidata.setMonth(mesInicio, diaInicio);
+
+                 let dataAlvoNesteAno = new Date(dataCandidata.getFullYear(), mesInicio, diaInicio);
+                 if (dataCandidata > dataAlvoNesteAno) {
+                     proximaData.setFullYear(proximaData.getFullYear() + intervalo);
+                     continue;
                  }
-                 // Validação de 29 Fev omitida para simplicidade
+
+                 while (dataCandidata < proximaData || dataCandidata < dtInicio) {
+                     dataCandidata.setFullYear(dataCandidata.getFullYear() + intervalo);
+                     dataCandidata.setMonth(mesInicio, diaInicio);
+                 }
                  return dataCandidata;
 
             default:
                 console.error(`Frequência desconhecida: ${frequencia}`);
                 return null;
         }
-
-        // Se chegou aqui (caso mensal não retornou ou semanal), precisa avançar proximaData
-        // switch (frequencia) {
-        //     case 'mensal': proximaData.setMonth(proximaData.getMonth() + intervalo); proximaData.setDate(1); break;
-        //     case 'semanal': proximaData.setDate(proximaData.getDate() + 7 * intervalo); break;
-            // Diaria e Anual já retornaram ou avançaram dentro do case
-        // }
-
     }
 
     console.warn(`Cálculo de próxima ocorrência atingiu limite de ${MAX_LOOPS} loops.`);
@@ -117,6 +115,7 @@ async function _generateFutureAlerts(recorrencia, horizonteMeses = 12, transacti
         iterations++;
 
         if (!isNaN(dataCalculo.getTime()) && dataCalculo >= new Date(recorrencia.data_inicio).setHours(12,0,0,0)) {
+            const codigoUnicoAlerta = `ALT-${nanoid(7)}`;
             const dataVencimentoStr = dataCalculo.toISOString().split('T')[0];
             alertasParaCriar.push({
                 id_usuario: recorrencia.id_usuario,
@@ -126,7 +125,8 @@ async function _generateFutureAlerts(recorrencia, horizonteMeses = 12, transacti
                 descricao: `${recorrencia.descricao || recorrencia.nome_categoria || 'Recorrência'} (${dataCalculo.toLocaleDateString('pt-BR', { month: 'short', year: '2-digit'})})`,
                 nome_categoria: recorrencia.nome_categoria,
                 id_recorrencia_pai: recorrencia.id_recorrencia,
-                status: 'pendente'
+                status: 'pendente',
+                codigo_unico: codigoUnicoAlerta
             });
         } else if (isNaN(dataCalculo.getTime())) {
             console.error(`[GenerateAlerts] Data de cálculo inválida encontrada para Rec ID ${recorrencia.id_recorrencia}. Iteração ${iterations}. Parando.`);
@@ -152,8 +152,7 @@ async function _generateFutureAlerts(recorrencia, horizonteMeses = 12, transacti
         try {
             await AlertaPagamento.bulkCreate(alertasParaCriar, {
                 transaction: transaction,
-                validate: true,
-                // ignoreDuplicates: true // Considerar com cuidado
+                validate: false
             });
             console.log(`[GenerateAlerts] ${alertasParaCriar.length} alertas criados com sucesso para Rec ID ${recorrencia.id_recorrencia}.`);
         } catch (bulkError) {
@@ -177,7 +176,7 @@ const createRecurrence = async (id_usuario, tipo, valor, nome_categoria, origem,
         }, { transaction: t });
 
         console.log(`[INFO] Recorrência ${recorrencia.id_recorrencia} criada. Gerando alertas futuros...`);
-        const horizonteGeracaoMeses = 24; // Gera para os próximos 24 meses
+        const horizonteGeracaoMeses = 24;
         await _generateFutureAlerts(recorrencia, horizonteGeracaoMeses, t);
 
         await t.commit();
@@ -253,7 +252,7 @@ const updateRecurrence = async (id_recorrencia, id_usuario, updates) => {
              .some(field => {
                  const newValue = cleanUpdates[field];
                  const oldValue = oldData[field];
-                 if (newValue === undefined) return false; // Campo não estava no update
+                 if (newValue === undefined) return false;
                  if (field === 'data_inicio' || field === 'data_fim_recorrencia') {
                       const oldDateStr = oldValue ? new Date(oldValue).toISOString().split('T')[0] : null;
                       const newDateStr = newValue ? new Date(newValue).toISOString().split('T')[0] : null;

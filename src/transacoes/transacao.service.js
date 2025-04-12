@@ -29,7 +29,7 @@ const generateUniqueTransactionCode = async () => {
 // ---------------------------------------------------------
 
 
-// --- Função Helper para Calcular Data de Início ---
+// --- Função Helper para Calcular Data de Início (sem mudanças) ---
 function calcularStartDate(periodoInput) {
     let startDate = null;
     const hoje = new Date();
@@ -99,8 +99,9 @@ function calcularStartDate(periodoInput) {
 /**
  * Cria uma nova transação.
  * O codigo_unico é gerado automaticamente.
+ * MODIFICADO: Aceita 'options' para incluir a transação.
  * @param {object} dadosTransacao - Objeto contendo os dados da transação.
- * @param {object} [options] - Opções do Sequelize (ex: { transaction: t }).
+ * @param {object} [options={}] - Opções do Sequelize (ex: { transaction: t }).
  * @returns {Promise<Transacao>} A transação criada.
  */
 const createTransaction = async (dadosTransacao, options = {}) => {
@@ -108,6 +109,8 @@ const createTransaction = async (dadosTransacao, options = {}) => {
     console.log("[createTransaction] Iniciando. Dados recebidos:", JSON.stringify(dadosTransacao, null, 2));
     if (options.transaction) {
         console.log(`[createTransaction] Executando dentro da transação ID: ${options.transaction.id || 'N/A'}`);
+    } else {
+        console.log("[createTransaction] Executando FORA de uma transação explícita."); // Log se não houver transação
     }
 
     try {
@@ -142,20 +145,19 @@ const createTransaction = async (dadosTransacao, options = {}) => {
             codigo_unico: codigo_unico_gerado,
         };
 
-        // Validação extra de tipos (opcional)
+        // Validação extra de tipos
         if (isNaN(dadosParaCriar.id_usuario)) throw new Error("ID de usuário inválido fornecido para createTransaction.");
         if (isNaN(dadosParaCriar.valor)) throw new Error("Valor inválido fornecido para createTransaction.");
-        // Adicione outras validações de tipo se necessário
+        if (!dadosParaCriar.tipo || !['despesa', 'receita'].includes(dadosParaCriar.tipo)) throw new Error("Tipo de transação inválido.");
+        if (!dadosParaCriar.data_transacao || !/\d{4}-\d{2}-\d{2}/.test(dadosParaCriar.data_transacao)) throw new Error("Data da transação inválida.");
 
-        // Remove chaves com valor explicitamente null se o banco não gostar ou para limpeza
-        // (Sequelize geralmente lida bem com null, então isso pode não ser necessário)
-        // Object.keys(dadosParaCriar).forEach(key => (dadosParaCriar[key] === null) && delete dadosParaCriar[key]);
 
         // LOG 4: Antes de chamar Transacao.create
-        console.log("[createTransaction] Chamando Transacao.create com (tipos ajustados):", JSON.stringify(dadosParaCriar, null, 2));
+        console.log("[createTransaction] Chamando Transacao.create com:", JSON.stringify(dadosParaCriar, null, 2));
+        if(options.transaction) console.log("[createTransaction] Passando a transação para o create.");
 
-        // Chama Transacao.create passando os dados e as opções (que podem conter a transação)
-        const novaTransacao = await Transacao.create(dadosParaCriar, options);
+        // Chama Transacao.create passando os dados e as opções (que AGORA contêm a transação)
+        const novaTransacao = await Transacao.create(dadosParaCriar, options); // <<< PASSA OPTIONS
 
         // LOG 5: Após chamar Transacao.create
         if (novaTransacao && novaTransacao.id_transacao) {
@@ -165,10 +167,10 @@ const createTransaction = async (dadosTransacao, options = {}) => {
             throw new Error("Falha ao obter o objeto da transação após a criação.");
         }
 
-        return novaTransacao; // Retorna o objeto criado
+        return novaTransacao;
 
     } catch (error) {
-        // LOG 6: Se ocorrer um erro em qualquer ponto do try
+        // LOG 6: Se ocorrer um erro
         console.error("[createTransaction] Erro durante a execução:", error);
          if (error.name === 'SequelizeUniqueConstraintError') {
             console.error("[createTransaction] Erro de Violação Única:", error.errors);
@@ -182,25 +184,25 @@ const createTransaction = async (dadosTransacao, options = {}) => {
     }
 };
 
+
+// --- Restante do arquivo transacao.service.js (listTransactions, etc.) ---
+// (O código das outras funções permanece o mesmo das versões anteriores)
+
 const listTransactions = async (id_usuario, filtroPeriodo = null, tipoFiltro = null, additionalFilters = {}) => {
-    const whereClause = { ...additionalFilters }; // Começa com filtros adicionais
-     // Garante que id_usuario seja número
+    const whereClause = { ...additionalFilters };
      const userIdNum = parseInt(id_usuario, 10);
      if(isNaN(userIdNum)) {
          throw new Error("ID de usuário inválido fornecido para listTransactions.");
      }
      whereClause.id_usuario = userIdNum;
 
-
     if (filtroPeriodo) {
         if (typeof filtroPeriodo === 'object' && filtroPeriodo.startDate && filtroPeriodo.endDate) {
-            // Validação básica das datas recebidas no objeto
             if (/\d{4}-\d{2}-\d{2}/.test(filtroPeriodo.startDate) && /\d{4}-\d{2}-\d{2}/.test(filtroPeriodo.endDate)) {
-                 // Assume UTC para evitar problemas de timezone com datas simples
                 const startDate = new Date(filtroPeriodo.startDate + 'T00:00:00Z');
                 const endDate = new Date(filtroPeriodo.endDate + 'T23:59:59.999Z');
                  if (!isNaN(startDate.getTime()) && !isNaN(endDate.getTime())) {
-                     whereClause.data_transacao = { [Op.between]: [startDate, endDate] };
+                     whereClause.data_transacao = { [Op.between]: [startDate, endDate] }; // Precisa do Op importado
                  } else {
                       console.warn(`[API LOG] Datas inválidas no objeto periodo: ${JSON.stringify(filtroPeriodo)}`);
                  }
@@ -211,16 +213,15 @@ const listTransactions = async (id_usuario, filtroPeriodo = null, tipoFiltro = n
             const startDateCalculada = calcularStartDate(filtroPeriodo);
             if (startDateCalculada instanceof Date && !isNaN(startDateCalculada)) {
                  const endDateCalculada = new Date(startDateCalculada);
-                 endDateCalculada.setHours(23, 59, 59, 999); // Fim do dia
+                 endDateCalculada.setHours(23, 59, 59, 999);
 
                  if (['hoje', 'ontem'].includes(filtroPeriodo.toLowerCase())) {
                      whereClause.data_transacao = { [Op.between]: [startDateCalculada, endDateCalculada] };
                  } else if (filtroPeriodo.toLowerCase() === 'semana_passada'){
-                     // startDateCalculada já é segunda da semana passada
-                     endDateCalculada.setDate(startDateCalculada.getDate() + 6); // Adiciona 6 dias para chegar a domingo
+                     endDateCalculada.setDate(startDateCalculada.getDate() + 6);
                       whereClause.data_transacao = { [Op.between]: [startDateCalculada, endDateCalculada] };
-                 } else { // Para mes_atual, semana_atual, etc., pega do início calculado em diante
-                     whereClause.data_transacao = { [Op.gte]: startDateCalculada };
+                 } else {
+                     whereClause.data_transacao = { [Op.gte]: startDateCalculada }; // Precisa do Op importado
                  }
             }
         }
@@ -260,14 +261,12 @@ const updateTransaction = async (id_transacao, updates) => {
             return null;
         }
 
-        // Limpa updates
         delete updates.id_usuario;
         delete updates.id_transacao;
         delete updates.codigo_unico;
         delete updates.id_alerta_origem;
         delete updates.id_recorrencia_origem;
 
-        // Converte valor para float se presente
         if (updates.valor !== undefined) {
             updates.valor = parseFloat(updates.valor);
              if (isNaN(updates.valor)) {
@@ -296,7 +295,6 @@ const deleteTransaction = async (id_transacao) => {
 };
 
 const deleteTransactionByCode = async (codigo_unico, id_usuario) => {
-     // Garante que id_usuario seja número
      const userIdNum = parseInt(id_usuario, 10);
      if(isNaN(userIdNum)) {
          throw new Error("ID de usuário inválido fornecido para deleteTransactionByCode.");
@@ -339,7 +337,7 @@ const getCurrentBalance = async (id_usuario) => {
 const getMonthlySummary = async (id_usuario, year, month) => {
      const userIdNum = parseInt(id_usuario, 10);
      const yearNum = parseInt(year, 10);
-     const monthNum = parseInt(month, 10); // 1-12
+     const monthNum = parseInt(month, 10);
 
      if(isNaN(userIdNum) || isNaN(yearNum) || isNaN(monthNum) || monthNum < 1 || monthNum > 12) {
           throw new Error("Parâmetros inválidos para getMonthlySummary.");
@@ -354,7 +352,7 @@ const getMonthlySummary = async (id_usuario, year, month) => {
             where: {
                 id_usuario: userIdNum,
                 data_transacao: {
-                    [Op.between]: [startDate.toISOString().split('T')[0], endDate.toISOString().split('T')[0]]
+                    [Op.between]: [startDate.toISOString().split('T')[0], endDate.toISOString().split('T')[0]] // Precisa do Op
                 }
             },
             attributes: ['tipo', 'valor', 'nome_categoria']
@@ -387,7 +385,6 @@ const getMonthlySummary = async (id_usuario, year, month) => {
 
 const getDailySummary = async (id_usuario, year, month, day) => {
      const userIdNum = parseInt(id_usuario, 10);
-     // Add validation for year, month, day
       if(isNaN(userIdNum) /*... add other checks ...*/) {
            throw new Error("Parâmetros inválidos para getDailySummary.");
       }
@@ -399,7 +396,7 @@ const getDailySummary = async (id_usuario, year, month, day) => {
             where: {
                 id_usuario: userIdNum,
                 data_transacao: {
-                    [Op.between]: [startOfDay.toISOString().split('T')[0], endOfDay.toISOString().split('T')[0]]
+                    [Op.between]: [startOfDay.toISOString().split('T')[0], endOfDay.toISOString().split('T')[0]] // Precisa do Op
                 }
             },
             order: [['id_transacao', 'ASC']]
@@ -424,7 +421,6 @@ const getDailySummary = async (id_usuario, year, month, day) => {
 
 const getWeeklySummary = async (id_usuario, year, week) => {
      const userIdNum = parseInt(id_usuario, 10);
-     // Add validation for year, week
       if(isNaN(userIdNum) /*... add other checks ...*/) {
            throw new Error("Parâmetros inválidos para getWeeklySummary.");
       }
@@ -445,7 +441,7 @@ const getWeeklySummary = async (id_usuario, year, week) => {
             where: {
                 id_usuario: userIdNum,
                 data_transacao: {
-                    [Op.between]: [startDate.toISOString().split('T')[0], endDate.toISOString().split('T')[0]]
+                    [Op.between]: [startDate.toISOString().split('T')[0], endDate.toISOString().split('T')[0]] // Precisa do Op
                 }
             },
              attributes: ['tipo', 'valor']
@@ -486,11 +482,11 @@ const getSpendingByCategory = async (id_usuario, startDate, endDate) => {
                 id_usuario: userIdNum,
                 tipo: 'despesa',
                 data_transacao: {
-                    [Op.between]: [startDate.toISOString().split('T')[0], endOfDayEndDate.toISOString().split('T')[0]]
+                    [Op.between]: [startDate.toISOString().split('T')[0], endOfDayEndDate.toISOString().split('T')[0]] // Precisa do Op
                 }
             },
-            group: [sequelize.literal('categoria')], // Agrupa pelo alias 'categoria'
-            order: [[sequelize.literal('total'), 'DESC']], // Ordena pelo alias 'total'
+            group: [sequelize.literal('categoria')],
+            order: [[sequelize.literal('total'), 'DESC']],
             raw: true
         });
 
@@ -519,7 +515,7 @@ const getTransactionStatement = async (id_usuario, startDate, endDate) => {
             where: {
                 id_usuario: userIdNum,
                 data_transacao: {
-                    [Op.between]: [startDate.toISOString().split('T')[0], endOfDayEndDate.toISOString().split('T')[0]]
+                    [Op.between]: [startDate.toISOString().split('T')[0], endOfDayEndDate.toISOString().split('T')[0]] // Precisa do Op
                 }
             },
             order: [['data_transacao', 'ASC'], ['id_transacao', 'ASC']]
@@ -532,10 +528,10 @@ const getTransactionStatement = async (id_usuario, startDate, endDate) => {
     }
 };
 
-
+// Exportar tudo
 module.exports = {
-    createTransaction,
-    // generateUniqueTransactionCode, // Não exportar helper interno
+    createTransaction, // <<< Exporta a versão modificada
+    // generateUniqueTransactionCode, // Não precisa exportar o helper interno
     listTransactions,
     getTransactionById,
     updateTransaction,

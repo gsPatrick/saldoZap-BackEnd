@@ -296,37 +296,49 @@ const getUpcomingPaymentAlerts = async (id_usuario, daysAhead = 7) => {
  * @param {'pendente' | 'pago' | 'cancelado'} novoStatus - O novo status desejado.
  * @returns {Promise<{success: boolean, status: number, message?: string, data?: AlertaPagamento}>} Resultado da operação.
  */
+
 const updateStatusByCode = async (codigo_unico, id_usuario, novoStatus) => {
-    const t = await AlertaPagamento.sequelize.transaction(); // Inicia transação do DB
+    console.log(`[updateStatusByCode] Iniciando para ${codigo_unico}, user ${id_usuario}, status ${novoStatus}`);
+    // Inicia transação do DB usando o sequelize da instância do Model
+    const t = await AlertaPagamento.sequelize.transaction();
+    console.log(`[updateStatusByCode] Transação DB iniciada (ID: ${t.id || 'N/A'})`); // Log ID da transação se disponível
 
     try {
+        console.log(`[updateStatusByCode] Buscando alerta com lock...`);
         const alerta = await AlertaPagamento.findOne({
             where: { codigo_unico: codigo_unico, id_usuario: id_usuario },
-            transaction: t, // Usa a transação para lock
-            lock: t.LOCK.UPDATE // Adiciona lock para evitar condição de corrida
+            transaction: t, // <<< Usa a transação
+            lock: t.LOCK.UPDATE // <<< Adiciona lock de escrita na linha
         });
+        console.log(`[updateStatusByCode] Alerta encontrado: ${alerta ? `ID ${alerta.id_alerta}, Status Atual ${alerta.status}` : 'Nenhum'}`);
 
         if (!alerta) {
+            console.log(`[updateStatusByCode] Alerta não encontrado. Rollback.`);
             await t.rollback();
             return { success: false, status: 404, message: "Alerta não encontrado." };
         }
 
         // Validar transições de status
         if (novoStatus === 'pago' && alerta.status !== 'pendente') {
+             console.log(`[updateStatusByCode] Tentativa inválida de pagar alerta com status ${alerta.status}. Rollback.`);
              await t.rollback();
              return { success: false, status: 400, message: `Alerta já está com status '${alerta.status}'.` };
         }
         if (novoStatus === 'cancelado' && alerta.status === 'pago') {
+             console.log(`[updateStatusByCode] Tentativa inválida de cancelar alerta já pago. Rollback.`);
              await t.rollback();
              return { success: false, status: 400, message: "Não é possível cancelar um alerta já pago." };
         }
+        // Idempotência: Se já está no status desejado, considera sucesso sem fazer nada.
         if (alerta.status === novoStatus) {
-            await t.commit(); // Commit mesmo sem mudanças para liberar lock
+            console.log(`[updateStatusByCode] Alerta já está no status ${novoStatus}. Commit.`);
+            await t.commit(); // Commit para liberar o lock e a transação
             return { success: true, status: 200, data: alerta, message: "Alerta já estava neste status." };
         }
 
         // --- LÓGICA PARA CRIAR TRANSAÇÃO AO PAGAR ---
         if (novoStatus === 'pago' && alerta.status === 'pendente') {
+            console.log(`[updateStatusByCode] Status 'pago' detectado. Preparando para criar transação...`);
             const dataTransacao = new Date().toISOString().split('T')[0]; // Data de hoje
             const dadosTransacao = {
                 id_usuario: alerta.id_usuario,
@@ -336,38 +348,63 @@ const updateStatusByCode = async (codigo_unico, id_usuario, novoStatus) => {
                 data_transacao: dataTransacao,
                 descricao: alerta.descricao || `Pagamento/Recebimento ref. Alerta ${alerta.codigo_unico}`,
                 id_alerta_origem: alerta.id_alerta // Vínculo importante
+                // codigo_unico da transação será gerado pelo createTransaction
             };
 
-            // Chama createTransaction (que agora aceita objeto)
-            // Idealmente, createTransaction também aceitaria a opção { transaction: t }
-            const transacaoCriada = await transacaoService.createTransaction(dadosTransacao /*, { transaction: t } */);
+            console.log(`[updateStatusByCode] Chamando transacaoService.createTransaction... Dados:`, JSON.stringify(dadosTransacao));
+
+            // >>> IMPORTANTE: Idealmente, createTransaction deveria aceitar a transação 't' <<<
+            // Se o seu transacaoService.createTransaction foi ajustado para aceitar options:
+            // const transacaoCriada = await transacaoService.createTransaction(dadosTransacao, { transaction: t });
+            // Se não foi ajustado, a criação da transação ocorrerá fora da transação 't',
+            // o que é menos seguro (pode salvar o alerta e falhar a transação, ou vice-versa).
+            // Vamos assumir por enquanto que ele NÃO aceita a transação 't' para manter compatibilidade.
+            const transacaoCriada = await transacaoService.createTransaction(dadosTransacao);
+
+            console.log(`[updateStatusByCode] transacaoService.createTransaction retornou: ${transacaoCriada ? `ID ${transacaoCriada.id_transacao}` : 'Falha'}`);
 
             if (!transacaoCriada || !transacaoCriada.id_transacao) {
-                await t.rollback(); // Desfaz tudo se a criação da transação falhar
-                console.error(`Falha ao criar transação para alerta ${alerta.codigo_unico}. Dados:`, dadosTransacao);
+                // Se a criação da transação FALHAR, fazemos rollback da transação 't'
+                // (que até agora só continha o lock e a busca do alerta)
+                await t.rollback();
+                console.error(`Falha ao criar transação correspondente para alerta ${alerta.codigo_unico}.`);
+                // Lança um erro para ser pego pelo catch principal
                 throw new Error("Falha ao criar a transação correspondente.");
             }
-            console.log(`Transação ${transacaoCriada.id_transacao} criada para o alerta ${alerta.codigo_unico}`);
+            console.log(`[updateStatusByCode] Transação ${transacaoCriada.id_transacao} criada com sucesso (fora da transação principal por enquanto).`);
         }
         // --- FIM DA LÓGICA DE CRIAÇÃO ---
 
-        // Atualiza o status do alerta dentro da transação
+        console.log(`[updateStatusByCode] Atualizando status do alerta ${alerta.id_alerta} para ${novoStatus} na transação...`);
         alerta.status = novoStatus;
-        await alerta.save({ transaction: t });
+        await alerta.save({ transaction: t }); // <<< Salva a mudança do status do alerta DENTRO da transação 't'
+        console.log(`[updateStatusByCode] Alerta salvo na transação. Fazendo commit...`);
 
-        // Confirma a transação no DB
+        // Confirma a transação no DB (salva a mudança de status do alerta)
         await t.commit();
+        console.log(`[updateStatusByCode] Commit da transação ${t.id || 'N/A'} realizado com sucesso.`);
 
         return { success: true, status: 200, data: alerta };
 
     } catch (error) {
-        // Qualquer erro durante o processo, desfaz a transação
-        await t.rollback();
-        console.error(`Erro ao atualizar status do alerta ${codigo_unico} para ${novoStatus}:`, error);
-        // Lança o erro para a rota retornar 500
-        // Pega a mensagem original do erro, se existir
+        // Se qualquer erro ocorreu (na busca, na criação da transação, ou no save/commit do alerta)
+        console.error(`[updateStatusByCode] Erro no bloco try/catch: ${error.message}`);
+        console.log(`[updateStatusByCode] Fazendo rollback da transação ${t.id || 'N/A'}...`);
+        // Garante rollback em caso de erro
+        // await t.rollback(); // Rollback já deve ter sido chamado ou será implícito se commit falhar
+        try { // Tenta rollback explicitamente, mas pode falhar se já foi feito
+             if (!t.finished) { // Verifica se a transação já foi finalizada
+                 await t.rollback();
+                 console.log(`[updateStatusByCode] Rollback explícito realizado.`);
+             }
+        } catch (rollbackError) {
+             console.error(`[updateStatusByCode] Erro durante o rollback explícito:`, rollbackError);
+        }
+
+        console.error(`Erro completo ao atualizar status do alerta ${codigo_unico} para ${novoStatus}:`, error);
+        // Propaga o erro para a rota tratar como 500
         const errorMessage = error.original?.message || error.message || "Erro interno ao processar a atualização do status do alerta.";
-        throw new Error(errorMessage);
+        throw new Error(errorMessage); // Lança o erro para a rota
     }
 };
 

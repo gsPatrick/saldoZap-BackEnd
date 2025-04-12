@@ -1,268 +1,250 @@
-    // src/alertas-pagamento/alerta-pagamento.routes.js
-    const express = require('express');
-    const alertaPagamentoService = require('./alerta-pagamento.service');
-    // Assumindo que você tem um middleware de autenticação que popula req.user
-    // Se não tiver, a lógica de id_usuario precisará ser adaptada.
-    // const authMiddleware = require('../middleware/auth'); // Exemplo
+// src/alertas-pagamento/alerta-pagamento.routes.js
+const express = require('express');
+const alertaPagamentoService = require('./alerta-pagamento.service');
+const authenticateApiKey = require('../middleware/authenticateApiKey'); // Importar o middleware
 
-    const router = express.Router();
+const router = express.Router();
 
-    // Exemplo: Aplicar middleware de autenticação a todas as rotas (opcional)
-    // router.use(authMiddleware);
+// --- ROTAS PÚBLICAS (ou com outra autenticação, se houver) ---
 
-    // Rota para CRIAR um novo alerta
-    router.post('/', async (req, res) => {
-        // Pegar o ID do usuário (do corpo da requisição ou do usuário autenticado)
-        // Se usar autenticação: const id_usuario = req.user?.id_usuario;
-        // Se vier no corpo: const { id_usuario, ... } = req.body;
-        // É mais seguro pegar do usuário autenticado.
+// Rota para CRIAR um novo alerta
+// Se esta rota precisar de autenticação, adicione authenticateApiKey aqui também
+// e garanta que id_usuario venha de uma fonte confiável (body validado ou token).
+router.post('/', async (req, res) => {
+    const dadosAlerta = { ...req.body };
 
-        // Vamos assumir que os dados vêm do corpo, mas idealmente viriam validados
-        const dadosAlerta = { ...req.body };
+    // Validação básica
+    if (!dadosAlerta.id_usuario || !dadosAlerta.valor || !dadosAlerta.data_vencimento || !dadosAlerta.tipo) {
+        return res.status(400).json({ error: "Missing required fields for payment alert (id_usuario, valor, data_vencimento, tipo)." });
+    }
+    // Converta id_usuario para número, se necessário
+    dadosAlerta.id_usuario = parseInt(dadosAlerta.id_usuario, 10);
+     if (isNaN(dadosAlerta.id_usuario)) {
+         return res.status(400).json({ error: "Invalid id_usuario format in body." });
+     }
 
-        // Validação básica (adapte conforme sua necessidade)
-        if (!dadosAlerta.id_usuario || !dadosAlerta.valor || !dadosAlerta.data_vencimento || !dadosAlerta.tipo) {
-            return res.status(400).json({ error: "Missing required fields for payment alert (id_usuario, valor, data_vencimento, tipo)." });
+
+    try {
+        const alertaPagamento = await alertaPagamentoService.createPaymentAlert(dadosAlerta);
+        res.status(201).json(alertaPagamento);
+    } catch (error) {
+        console.error("Erro na rota POST /alertas-pagamento:", error);
+        // Retornar erro específico se possível (ex: erro de validação)
+        res.status(500).json({ error: error.message || "Internal server error creating payment alert." });
+    }
+});
+
+// Rota para LISTAR alertas com filtros
+router.get('/', async (req, res) => {
+    const queryParams = { ...req.query };
+    console.log("Query Params Recebidos na Rota:", queryParams);
+
+    let filters = {};
+
+    if (queryParams.id_usuario) {
+        const idUsuarioNum = parseInt(queryParams.id_usuario, 10);
+        if (isNaN(idUsuarioNum)) {
+            return res.status(400).json({ error: "Invalid id_usuario format." });
         }
-        // Outras validações (formato da data, tipo válido, etc.) podem ser adicionadas
+        filters.id_usuario = idUsuarioNum;
+        // Não deletar outros queryParams, passar todos para o service
+    } else {
+        return res.status(400).json({ error: "Missing required id_usuario query parameter." });
+    }
 
-        try {
-            const alertaPagamento = await alertaPagamentoService.createPaymentAlert(dadosAlerta);
-            res.status(201).json(alertaPagamento);
-        } catch (error) {
-            console.error("Erro na rota POST /alertas-pagamento:", error);
-            res.status(500).json({ error: "Internal server error creating payment alert." });
-        }
-    });
+    // Passa todos os parâmetros recebidos (incluindo os com colchetes) para o service
+    const finalFilters = { ...queryParams, id_usuario: filters.id_usuario };
+    console.log("Filtros Finais Passados para o Service:", finalFilters);
 
-    // Rota para LISTAR alertas com filtros (MODIFICADA)
-    router.get('/', async (req, res) => {
-        // Extrai TODOS os parâmetros da query string
-        const queryParams = { ...req.query };
-        console.log("Query Params Recebidos na Rota:", queryParams); // <<< ADICIONE ESTE LOG
+    try {
+        const alertasPagamento = await alertaPagamentoService.listPaymentAlerts(finalFilters);
+        res.json(alertasPagamento);
+    } catch (error) {
+        console.error("Erro na rota GET /alertas-pagamento:", error);
+        res.status(500).json({ error: "Internal server error listing payment alerts." });
+    }
+});
 
-        let filters = {}; // Objeto para guardar filtros processados
+// Rota para BUSCAR um alerta específico pelo ID
+// Geralmente GETs são públicos ou usam autenticação baseada em sessão/token do *usuário final*
+// Não estamos protegendo com API Key aqui, mas poderia ser feito se necessário.
+router.get('/:id_alerta', async (req, res) => {
+    const { id_alerta } = req.params;
 
-        // 1. Processar id_usuario (Obrigatório?)
-        // Pegar do usuário autenticado é mais seguro:
-        // const id_usuario_auth = req.user?.id_usuario;
-        // if (!id_usuario_auth) return res.status(401).json({ error: "Authentication required." });
-        // filters.id_usuario = id_usuario_auth;
+    if (isNaN(parseInt(id_alerta))) {
+        return res.status(400).json({ message: "Invalid alert ID format." });
+    }
 
-        // OU pegar da query (menos seguro, permite ver dados de outros?)
-        if (queryParams.id_usuario) {
-            const idUsuarioNum = parseInt(queryParams.id_usuario, 10);
-            if (isNaN(idUsuarioNum)) {
-                return res.status(400).json({ error: "Invalid id_usuario format." });
-            }
-            filters.id_usuario = idUsuarioNum;
-            delete queryParams.id_usuario; // Remove do objeto original
+    try {
+        const alertaPagamento = await alertaPagamentoService.getPaymentAlertById(parseInt(id_alerta));
+        if (alertaPagamento) {
+            // Poderia adicionar checagem se o usuário logado (se houver) pode ver este alerta
+            res.json(alertaPagamento);
         } else {
-            // Decida se id_usuario é obrigatório na query
-            return res.status(400).json({ error: "Missing required id_usuario query parameter." });
+            res.status(404).json({ message: "Payment alert not found." });
         }
+    } catch (error) {
+        console.error(`Erro na rota GET /alertas-pagamento/${id_alerta}:`, error);
+        res.status(500).json({ error: "Internal server error getting payment alert." });
+    }
+});
 
-        // 2. Processar outros filtros diretos (status, tipo, id_recorrencia_pai, etc.)
-        if (queryParams.status) {
-            filters.status = queryParams.status;
-            delete queryParams.status;
+// Rota para buscar alertas PRÓXIMOS do vencimento
+// Também geralmente pública ou com autenticação do usuário final.
+router.get('/upcoming/:id_usuario', async (req, res) => {
+    const { id_usuario } = req.params;
+    const daysAhead = parseInt(req.query.days || 7);
+
+    if (isNaN(parseInt(id_usuario))) {
+        return res.status(400).json({ message: "Invalid user ID format." });
+    }
+    if (isNaN(daysAhead) || daysAhead <= 0) {
+         return res.status(400).json({ message: "Invalid 'days' parameter." });
+     }
+
+    try {
+        // A validação de que o usuário X só pode ver seus próprios alertas
+        // deve estar idealmente aqui ou no service.
+        const upcomingAlerts = await alertaPagamentoService.getUpcomingPaymentAlerts(parseInt(id_usuario), daysAhead);
+        res.json(upcomingAlerts);
+    } catch (error) {
+        console.error(`Erro na rota GET /alertas-pagamento/upcoming/${id_usuario}:`, error);
+        res.status(500).json({ error: "Internal server error getting upcoming payment alerts." });
+    }
+});
+
+
+// --- ROTAS PROTEGIDAS COM API KEY (PUT e DELETE) ---
+
+// Rota para ATUALIZAR um alerta (exceto status) pelo ID
+router.put('/:id_alerta', authenticateApiKey, async (req, res) => { // <<< MIDDLEWARE APLICADO
+    const { id_alerta } = req.params;
+    const updates = { ...req.body }; // Copia o corpo da requisição
+
+    // N8N precisa enviar o ID do usuário no corpo para validação
+    const id_usuario_requisitante = parseInt(updates.id_usuario, 10); // Pegar de um campo esperado como 'id_usuario'
+    if (!id_usuario_requisitante || isNaN(id_usuario_requisitante)) {
+        return res.status(400).json({ error: "Missing or invalid id_usuario in request body for validation." });
+    }
+    delete updates.id_usuario; // Remove do objeto a ser passado para 'update'
+
+    if (isNaN(parseInt(id_alerta))) {
+        return res.status(400).json({ message: "Invalid alert ID format." });
+    }
+
+    // Remover outros campos não atualizáveis
+    delete updates.id_recorrencia_pai;
+    delete updates.codigo_unico;
+    delete updates.id_alerta;
+    delete updates.status; // Forçar uso da rota /status para mudar status
+
+
+    try {
+        // Passa o id_usuario requisitante para validação opcional no service
+        const alertaPagamentoAtualizado = await alertaPagamentoService.updatePaymentAlert(parseInt(id_alerta), updates, id_usuario_requisitante);
+        if (alertaPagamentoAtualizado) {
+            res.json(alertaPagamentoAtualizado);
+        } else {
+            // Pode ser não encontrado OU não autorizado pelo service
+            res.status(404).json({ message: "Payment alert not found or update forbidden." });
         }
-        if (queryParams.tipo && ['despesa', 'receita'].includes(queryParams.tipo)) {
-            filters.tipo = queryParams.tipo;
-            delete queryParams.tipo;
+    } catch (error) {
+        console.error(`Erro na rota PUT /alertas-pagamento/${id_alerta}:`, error);
+        res.status(500).json({ error: "Internal server error updating payment alert." });
+    }
+});
+
+// Rota para ATUALIZAR O STATUS de um alerta pelo CÓDIGO ÚNICO
+router.put('/by-code/:codigo_unico/status', authenticateApiKey, async (req, res) => { // <<< MIDDLEWARE APLICADO
+    const { codigo_unico } = req.params;
+    // Pega status E id_usuario do corpo da requisição
+    const { status, id_usuario } = req.body;
+
+    // Validações
+    if (!id_usuario || isNaN(parseInt(id_usuario, 10))) { // Valida se id_usuario existe e é numérico
+        return res.status(400).json({ error: "Missing or invalid id_usuario in request body." });
+    }
+     if (!codigo_unico || !status || !['pago', 'cancelado', 'pendente'].includes(status)) {
+         return res.status(400).json({ error: "Missing or invalid codigo_unico or status." });
+     }
+
+    try {
+        // Passa o id_usuario do body para o service para validação de propriedade
+        const result = await alertaPagamentoService.updateStatusByCode(codigo_unico, parseInt(id_usuario, 10), status);
+        if (result.success) {
+            res.status(result.status).json(result.data || { message: result.message }); // 200 OK
+        } else {
+            res.status(result.status).json({ message: result.message }); // 404 ou 400
         }
-        if (queryParams.id_recorrencia_pai) {
-            const idRecPaiNum = parseInt(queryParams.id_recorrencia_pai, 10);
-            if (!isNaN(idRecPaiNum)) {
-                filters.id_recorrencia_pai = idRecPaiNum;
-            }
-            delete queryParams.id_recorrencia_pai;
+    } catch (error) {
+        console.error(`Erro na rota PUT /alertas-pagamento/by-code/${codigo_unico}/status:`, error);
+        res.status(500).json({ error: error.message || "Internal server error updating alert status." });
+    }
+});
+
+// Rota para DELETAR um alerta pelo CÓDIGO ÚNICO
+router.delete('/by-code/:codigo_unico', authenticateApiKey, async (req, res) => { // <<< MIDDLEWARE APLICADO
+    const { codigo_unico } = req.params;
+    // Pega id_usuario da QUERY STRING (mais comum para DELETE sem corpo)
+    const id_usuario = req.query.id_usuario;
+
+    if (!id_usuario || isNaN(parseInt(id_usuario, 10))) { // Valida se id_usuario existe e é numérico
+        return res.status(400).json({ error: "Missing or invalid id_usuario in query string." });
+    }
+    if (!codigo_unico) {
+        return res.status(400).json({ error: "Missing codigo_unico parameter." });
+    }
+
+    try {
+        // Passa o id_usuario da query para o service validar propriedade
+        const sucesso = await alertaPagamentoService.deletePaymentAlertByCode(codigo_unico, parseInt(id_usuario, 10));
+        if (sucesso) {
+            res.status(204).send();
+        } else {
+            res.status(404).json({ message: "Payment alert with this code not found for this user." });
         }
-        // Adicione outros filtros diretos que você queira suportar
+    } catch (error) {
+        console.error(`Erro na rota DELETE /alertas-pagamento/by-code/${codigo_unico}:`, error);
+        res.status(500).json({ error: "Internal server error deleting payment alert by code." });
+    }
+});
 
-        // 3. Passar os filtros especiais (com colchetes) e os restantes
-        // O serviço `listPaymentAlerts` agora tratará os filtros como 'data_vencimento[gte]'
-        filters = { ...filters, ...queryParams }; // Adiciona os parâmetros restantes (incluindo os de data)
+// Rota para DELETAR um alerta pelo ID
+router.delete('/:id_alerta', authenticateApiKey, async (req, res) => { // <<< MIDDLEWARE APLICADO
+    const { id_alerta } = req.params;
+     // Opcional: Pegar id_usuario da query para dupla checagem no service
+     const id_usuario_requisitante = req.query.id_usuario ? parseInt(req.query.id_usuario, 10) : null;
 
-        try {
-            const alertasPagamento = await alertaPagamentoService.listPaymentAlerts(filters);
-            res.json(alertasPagamento);
-        } catch (error) {
-            console.error("Erro na rota GET /alertas-pagamento:", error);
-            res.status(500).json({ error: "Internal server error listing payment alerts." });
+    if (isNaN(parseInt(id_alerta))) {
+        return res.status(400).json({ message: "Invalid alert ID format." });
+    }
+
+    try {
+        // Idealmente, o service deveria buscar o alerta, verificar se pertence
+        // ao id_usuario_requisitante (se fornecido), e então deletar.
+        // Versão atual do service só deleta por ID.
+        // Para segurança, precisaríamos ajustar o service ou fazer a busca aqui:
+        /*
+        const alerta = await alertaPagamentoService.getPaymentAlertById(parseInt(id_alerta));
+        if (!alerta) return res.status(404).json({ message: "Payment alert not found." });
+        if (id_usuario_requisitante && alerta.id_usuario !== id_usuario_requisitante) {
+             return res.status(403).json({ message: "Forbidden." });
         }
-    });
+        const sucesso = await alertaPagamentoService.deletePaymentAlert(parseInt(id_alerta));
+        */
+       // Usando a versão atual do service (menos segura sem validação de usuário):
+       const sucesso = await alertaPagamentoService.deletePaymentAlert(parseInt(id_alerta));
 
-    // Rota para BUSCAR um alerta específico pelo ID
-    router.get('/:id_alerta', async (req, res) => {
-        const { id_alerta } = req.params;
-        const idUsuarioLogado = req.user?.id_usuario; // Obtenha o ID do usuário autenticado
-
-        if (isNaN(parseInt(id_alerta))) {
-            return res.status(400).json({ message: "Invalid alert ID format." });
+        if (sucesso) {
+            res.status(204).send();
+        } else {
+            res.status(404).json({ message: "Payment alert not found for deletion." });
         }
-
-        // Segurança: Adicionar validação de usuário aqui se necessário
-        // if (!idUsuarioLogado) return res.status(401).json({ error: "Authentication required." });
-
-        try {
-            const alertaPagamento = await alertaPagamentoService.getPaymentAlertById(parseInt(id_alerta));
-            if (alertaPagamento) {
-                // Segurança extra: Verificar se alertaPagamento.id_usuario === idUsuarioLogado
-                // if (alertaPagamento.id_usuario !== idUsuarioLogado) {
-                //     return res.status(403).json({ message: "Forbidden." });
-                // }
-                res.json(alertaPagamento);
-            } else {
-                res.status(404).json({ message: "Payment alert not found." });
-            }
-        } catch (error) {
-            console.error(`Erro na rota GET /alertas-pagamento/${id_alerta}:`, error);
-            res.status(500).json({ error: "Internal server error getting payment alert." });
-        }
-    });
-
-    // Rota para ATUALIZAR um alerta (exceto status)
-    router.put('/:id_alerta', async (req, res) => {
-        const { id_alerta } = req.params;
-        const updates = req.body;
-        const idUsuarioLogado = req.user?.id_usuario; // Obtenha o ID do usuário autenticado
-
-        if (isNaN(parseInt(id_alerta))) {
-            return res.status(400).json({ message: "Invalid alert ID format." });
-        }
-        // Segurança: Adicionar validação de usuário aqui se necessário
-        // if (!idUsuarioLogado) return res.status(401).json({ error: "Authentication required." });
-
-        // Remover campos não atualizáveis
-        delete updates.id_usuario;
-        delete updates.id_recorrencia_pai;
-        delete updates.codigo_unico;
-        delete updates.id_alerta;
-        // Talvez impedir atualização de status aqui e forçar uso da rota /status
-        // delete updates.status;
+    } catch (error) {
+        console.error(`Erro na rota DELETE /alertas-pagamento/${id_alerta}:`, error);
+        res.status(500).json({ error: "Internal server error deleting payment alert." });
+    }
+});
 
 
-        try {
-            // Validação extra no service para garantir que o usuário logado é o dono seria ideal
-            const alertaPagamentoAtualizado = await alertaPagamentoService.updatePaymentAlert(parseInt(id_alerta), updates /*, idUsuarioLogado */);
-            if (alertaPagamentoAtualizado) {
-                res.json(alertaPagamentoAtualizado);
-            } else {
-                res.status(404).json({ message: "Payment alert not found for update." });
-            }
-        } catch (error) {
-            console.error(`Erro na rota PUT /alertas-pagamento/${id_alerta}:`, error);
-            res.status(500).json({ error: "Internal server error updating payment alert." });
-        }
-    });
-
-    // Rota para ATUALIZAR O STATUS de um alerta pelo CÓDIGO ÚNICO
-    router.put('/by-code/:codigo_unico/status', async (req, res) => {
-        const { codigo_unico } = req.params;
-        const { status } = req.body; // Espera { "status": "pago" | "cancelado" | "pendente" }
-        const id_usuario = req.user?.id_usuario; // Obtenha o ID do usuário autenticado
-
-        if (!id_usuario) {
-            return res.status(401).json({ error: "User authentication required." });
-        }
-        if (!codigo_unico || !status || !['pago', 'cancelado', 'pendente'].includes(status)) {
-            return res.status(400).json({ error: "Missing or invalid codigo_unico or status." });
-        }
-
-        try {
-            // O service updateStatusByCode já valida o usuário
-            const result = await alertaPagamentoService.updateStatusByCode(codigo_unico, id_usuario, status);
-
-            if (result.success) {
-                res.status(result.status).json(result.data || { message: result.message }); // 200 OK
-            } else {
-                res.status(result.status).json({ message: result.message }); // 404 ou 400
-            }
-        } catch (error) {
-            // Captura erros lançados pelo service (provavelmente 500 interno)
-            console.error(`Erro na rota PUT /alertas-pagamento/by-code/${codigo_unico}/status:`, error);
-            res.status(500).json({ error: error.message || "Internal server error updating alert status." });
-        }
-    });
-
-    // Rota para DELETAR um alerta pelo CÓDIGO ÚNICO
-    router.delete('/by-code/:codigo_unico', async (req, res) => {
-        const { codigo_unico } = req.params;
-        const id_usuario = req.user?.id_usuario; // Obtenha o ID do usuário autenticado
-
-        if (!id_usuario) {
-            return res.status(401).json({ error: "User authentication required." });
-        }
-        if (!codigo_unico) {
-            return res.status(400).json({ error: "Missing codigo_unico parameter." });
-        }
-
-        try {
-            // Service já valida o usuário
-            const sucesso = await alertaPagamentoService.deletePaymentAlertByCode(codigo_unico, id_usuario);
-            if (sucesso) {
-                res.status(204).send(); // Sucesso, sem conteúdo
-            } else {
-                res.status(404).json({ message: "Payment alert with this code not found for this user." });
-            }
-        } catch (error) {
-            console.error(`Erro na rota DELETE /alertas-pagamento/by-code/${codigo_unico}:`, error);
-            res.status(500).json({ error: "Internal server error deleting payment alert by code." });
-        }
-    });
-
-    // Rota para DELETAR um alerta pelo ID (Manter se usada internamente/admin)
-    router.delete('/:id_alerta', async (req, res) => {
-        const { id_alerta } = req.params;
-        const idUsuarioLogado = req.user?.id_usuario; // Obtenha o ID do usuário autenticado
-
-        if (isNaN(parseInt(id_alerta))) {
-            return res.status(400).json({ message: "Invalid alert ID format." });
-        }
-        // Segurança: Adicionar validação de usuário aqui se necessário
-        // if (!idUsuarioLogado) return res.status(401).json({ error: "Authentication required." });
-        // Antes de deletar, buscar e verificar se pertence ao usuário logado seria mais seguro
-
-        try {
-            const sucesso = await alertaPagamentoService.deletePaymentAlert(parseInt(id_alerta));
-            if (sucesso) {
-                res.status(204).send();
-            } else {
-                res.status(404).json({ message: "Payment alert not found for deletion." });
-            }
-        } catch (error) {
-            console.error(`Erro na rota DELETE /alertas-pagamento/${id_alerta}:`, error);
-            res.status(500).json({ error: "Internal server error deleting payment alert." });
-        }
-    });
-
-    // Rota para buscar alertas PRÓXIMOS do vencimento
-    router.get('/upcoming/:id_usuario', async (req, res) => {
-        const { id_usuario } = req.params;
-        const idUsuarioLogado = req.user?.id_usuario; // Obtenha o ID do usuário autenticado
-        const daysAhead = parseInt(req.query.days || 7); // Pega ?days= da query ou usa 7
-
-        if (isNaN(parseInt(id_usuario))) {
-            return res.status(400).json({ message: "Invalid user ID format." });
-        }
-        if (isNaN(daysAhead) || daysAhead <= 0) {
-            return res.status(400).json({ message: "Invalid 'days' parameter." });
-        }
-
-        // Segurança: Verificar se o id_usuario do parâmetro é o mesmo do usuário logado
-        // if (!idUsuarioLogado || parseInt(id_usuario) !== idUsuarioLogado) {
-        //     return res.status(403).json({ message: "Forbidden." });
-        // }
-
-        try {
-            const upcomingAlerts = await alertaPagamentoService.getUpcomingPaymentAlerts(parseInt(id_usuario), daysAhead);
-            res.json(upcomingAlerts);
-        } catch (error) {
-            console.error(`Erro na rota GET /alertas-pagamento/upcoming/${id_usuario}:`, error);
-            res.status(500).json({ error: "Internal server error getting upcoming payment alerts." });
-        }
-    });
-
-
-    module.exports = router;
+module.exports = router;

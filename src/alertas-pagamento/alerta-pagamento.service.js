@@ -70,55 +70,70 @@ const getPaymentAlertById = async (id_alerta) => {
  * @returns {Promise<AlertaPagamento[]>} Lista de alertas encontrados.
  */
 const listPaymentAlerts = async (queryParams = {}) => {
+    console.log("[listPaymentAlerts] Query Params Recebidos:", queryParams); // Log inicial
+
     try {
-        const whereClause = {};
+        const whereClause = {}; // Começa vazio
+
+        // Processa filtros diretos primeiro
+        if (queryParams.id_usuario) {
+            const numValue = parseInt(queryParams.id_usuario, 10);
+            if (!isNaN(numValue)) whereClause.id_usuario = numValue;
+        }
+        if (queryParams.status) {
+            whereClause.status = queryParams.status;
+        }
+        if (queryParams.tipo && ['despesa', 'receita'].includes(queryParams.tipo)) {
+            whereClause.tipo = queryParams.tipo;
+        }
+         if (queryParams.id_recorrencia_pai) {
+            const numValue = parseInt(queryParams.id_recorrencia_pai, 10);
+            if (!isNaN(numValue)) whereClause.id_recorrencia_pai = numValue;
+        }
+        // Adicione outros filtros diretos aqui se necessário
+
+        console.log("[listPaymentAlerts] Where Clause após filtros diretos:", JSON.stringify(whereClause));
+
+        // Processa filtros de data separadamente
         const dateFilters = {};
-
-        // Loop CORRETO
-        for (const key in queryParams) {
-            if (Object.hasOwnProperty.call(queryParams, key)) {
-                const value = queryParams[key];
-
-                // Condições CORRETAS para checar as chaves de data
-                if (key === 'data_vencimento[gte]') {
-                    dateFilters[Op.gte] = value; // Atribuição CORRETA usando Op.gte
-                } else if (key === 'data_vencimento[lte]') {
-                    dateFilters[Op.lte] = value; // Atribuição CORRETA usando Op.lte
-                }
-                // Lógica CORRETA para outros filtros
-                else if (['id_usuario', 'status', 'tipo', 'id_recorrencia_pai'].includes(key)) {
-                     if(key === 'id_usuario' || key === 'id_recorrencia_pai') {
-                         const numValue = parseInt(value, 10);
-                         if (!isNaN(numValue)) whereClause[key] = numValue;
-                     } else {
-                         whereClause[key] = value;
-                     }
-                }
-            }
+        if (queryParams['data_vencimento[gte]']) {
+            console.log("[listPaymentAlerts] Processando data_vencimento[gte]:", queryParams['data_vencimento[gte]']);
+            dateFilters[Op.gte] = queryParams['data_vencimento[gte]'];
+        }
+        if (queryParams['data_vencimento[lte]']) {
+            console.log("[listPaymentAlerts] Processando data_vencimento[lte]:", queryParams['data_vencimento[lte]']);
+            dateFilters[Op.lte] = queryParams['data_vencimento[lte]'];
         }
 
-        // Adição CORRETA do filtro de data à whereClause principal
+        console.log("[listPaymentAlerts] Objeto dateFilters montado:", JSON.stringify(dateFilters));
+
+
+        // Adiciona o filtro de data à cláusula WHERE apenas se houver condições
         if (Object.keys(dateFilters).length > 0) {
-            whereClause.data_vencimento = dateFilters;
+             console.log("[listPaymentAlerts] Adicionando dateFilters à whereClause.data_vencimento");
+            // <<< TENTATIVA DE ATRIBUIÇÃO MAIS EXPLÍCITA >>>
+            whereClause['data_vencimento'] = { ...dateFilters }; // Cria um novo objeto com as props de dateFilters
+        } else {
+            console.log("[listPaymentAlerts] Nenhum filtro de data encontrado para adicionar.");
         }
 
-        // Log CORRETO para depuração
-        console.log("Cláusula WHERE final para findAll em listPaymentAlerts:", whereClause);
+        // <<< Log Final ANTES do findAll >>>
+        console.log("Cláusula WHERE final para findAll em listPaymentAlerts:", JSON.stringify(whereClause, null, 2));
 
-        // Chamada findAll CORRETA com a whereClause construída
         const alertasPagamento = await AlertaPagamento.findAll({
             where: whereClause,
             order: [['data_vencimento', 'ASC']]
         });
+
+        console.log(`[listPaymentAlerts] Encontrados ${alertasPagamento.length} alertas.`); // Log do resultado
         return alertasPagamento;
+
     } catch (error) {
-        // Tratamento de erro CORRETO
         console.error("Erro Sequelize em listPaymentAlerts:", error);
         console.error("SQL Gerado (se disponível no erro):", error.sql || error.parent?.sql);
         throw error;
     }
 };
-
 
 /**
  * Atualiza um alerta de pagamento existente (exceto status 'pago').

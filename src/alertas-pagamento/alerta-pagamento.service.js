@@ -77,52 +77,100 @@ const listPaymentAlerts = async (queryParams = {}) => {
 
         // Processa filtros diretos primeiro
         if (queryParams.id_usuario) {
+            // Converte para número para garantir tipo correto na query
             const numValue = parseInt(queryParams.id_usuario, 10);
-            if (!isNaN(numValue)) whereClause.id_usuario = numValue;
+            if (!isNaN(numValue)) {
+                whereClause.id_usuario = numValue;
+            } else {
+                console.warn(`[listPaymentAlerts] id_usuario inválido recebido: ${queryParams.id_usuario}`);
+                // Pode ser útil lançar um erro aqui ou retornar array vazio dependendo da regra de negócio
+                // throw new Error("ID de usuário inválido.");
+            }
         }
         if (queryParams.status) {
-            whereClause.status = queryParams.status;
+            // Validação opcional do status (ex: ['pendente', 'pago', 'cancelado'])
+            if (['pendente', 'pago', 'cancelado'].includes(queryParams.status)) {
+                whereClause.status = queryParams.status;
+            } else {
+                 console.warn(`[listPaymentAlerts] status inválido recebido: ${queryParams.status}`);
+            }
         }
         if (queryParams.tipo && ['despesa', 'receita'].includes(queryParams.tipo)) {
             whereClause.tipo = queryParams.tipo;
         }
-         if (queryParams.id_recorrencia_pai) {
+        if (queryParams.id_recorrencia_pai) {
             const numValue = parseInt(queryParams.id_recorrencia_pai, 10);
-            if (!isNaN(numValue)) whereClause.id_recorrencia_pai = numValue;
+            if (!isNaN(numValue)) {
+                whereClause.id_recorrencia_pai = numValue;
+            } else {
+                 console.warn(`[listPaymentAlerts] id_recorrencia_pai inválido recebido: ${queryParams.id_recorrencia_pai}`);
+            }
         }
-        // Adicione outros filtros diretos aqui se necessário
+        // Adicione outros filtros diretos aqui se necessário (ex: nome_categoria)
+        // if (queryParams.nome_categoria) {
+        //     whereClause.nome_categoria = queryParams.nome_categoria;
+        // }
 
         console.log("[listPaymentAlerts] Where Clause após filtros diretos:", JSON.stringify(whereClause));
 
+        // --- INÍCIO DA SEÇÃO CORRIGIDA ---
+
         // Processa filtros de data separadamente
-        const dateFilters = {};
+        const dateFilters = {}; // Objeto para montar as condições de data
+        let hasDateFilter = false; // Flag para indicar se algum filtro de data foi adicionado
+
+        // Processa data_vencimento[gte] (maior ou igual a)
         if (queryParams['data_vencimento[gte]']) {
-            console.log("[listPaymentAlerts] Processando data_vencimento[gte]:", queryParams['data_vencimento[gte]']);
-            dateFilters[Op.gte] = queryParams['data_vencimento[gte]'];
+            const gteDate = queryParams['data_vencimento[gte]'];
+            console.log("[listPaymentAlerts] Processando data_vencimento[gte]:", gteDate);
+            // Validação básica do formato YYYY-MM-DD (pode ser mais robusta)
+            if (/\d{4}-\d{2}-\d{2}/.test(gteDate)) {
+                dateFilters[Op.gte] = gteDate;
+                hasDateFilter = true; // Marca que temos um filtro de data
+            } else {
+                 console.warn(`[listPaymentAlerts] Valor inválido ou formato incorreto para data_vencimento[gte]: ${gteDate}`);
+            }
         }
+
+        // Processa data_vencimento[lte] (menor ou igual a)
         if (queryParams['data_vencimento[lte]']) {
-            console.log("[listPaymentAlerts] Processando data_vencimento[lte]:", queryParams['data_vencimento[lte]']);
-            dateFilters[Op.lte] = queryParams['data_vencimento[lte]'];
+            const lteDate = queryParams['data_vencimento[lte]'];
+            console.log("[listPaymentAlerts] Processando data_vencimento[lte]:", lteDate);
+             // Validação básica do formato YYYY-MM-DD
+             if (/\d{4}-\d{2}-\d{2}/.test(lteDate)) {
+                dateFilters[Op.lte] = lteDate;
+                hasDateFilter = true; // Marca que temos um filtro de data
+             } else {
+                 console.warn(`[listPaymentAlerts] Valor inválido ou formato incorreto para data_vencimento[lte]: ${lteDate}`);
+             }
         }
 
-        console.log("[listPaymentAlerts] Objeto dateFilters montado:", JSON.stringify(dateFilters));
-
-
-        // Adiciona o filtro de data à cláusula WHERE apenas se houver condições
-        if (Object.keys(dateFilters).length > 0) {
+        // Adiciona o filtro de data à cláusula WHERE apenas se houver condições válidas
+        if (hasDateFilter) { // <<<< USA A FLAG CORRETA AGORA
              console.log("[listPaymentAlerts] Adicionando dateFilters à whereClause.data_vencimento");
-            // <<< TENTATIVA DE ATRIBUIÇÃO MAIS EXPLÍCITA >>>
-            whereClause['data_vencimento'] = { ...dateFilters }; // Cria um novo objeto com as props de dateFilters
+             // Não precisa usar spread operator aqui, pode atribuir diretamente
+             whereClause.data_vencimento = dateFilters;
         } else {
-            console.log("[listPaymentAlerts] Nenhum filtro de data encontrado para adicionar.");
+            console.log("[listPaymentAlerts] Nenhum filtro de data válido encontrado para adicionar.");
         }
 
-        // <<< Log Final ANTES do findAll >>>
-        console.log("Cláusula WHERE final para findAll em listPaymentAlerts:", JSON.stringify(whereClause, null, 2));
+        // --- FIM DA SEÇÃO CORRIGIDA ---
+
+        // Log Final ANTES do findAll para depuração
+        // Usar JSON.stringify com replacer para tentar mostrar os Symbols (pode não funcionar em todos os consoles)
+        const replacer = (key, value) => {
+             if (typeof value === 'symbol') {
+                return value.toString(); // Converte Symbol para string (ex: "Symbol(gte)")
+            }
+            return value;
+        };
+        console.log("Cláusula WHERE final para findAll em listPaymentAlerts:", JSON.stringify(whereClause, replacer, 2));
 
         const alertasPagamento = await AlertaPagamento.findAll({
             where: whereClause,
-            order: [['data_vencimento', 'ASC']]
+            order: [['data_vencimento', 'ASC']] // Ordena por data de vencimento
+            // Adicione 'include' se precisar carregar dados relacionados (ex: categoria, usuário)
+            // include: [{ model: Categoria, as: 'categoria' }]
         });
 
         console.log(`[listPaymentAlerts] Encontrados ${alertasPagamento.length} alertas.`); // Log do resultado
@@ -130,8 +178,13 @@ const listPaymentAlerts = async (queryParams = {}) => {
 
     } catch (error) {
         console.error("Erro Sequelize em listPaymentAlerts:", error);
-        console.error("SQL Gerado (se disponível no erro):", error.sql || error.parent?.sql);
-        throw error;
+        // Log adicional para SQL gerado, se disponível no erro (ajuda a depurar)
+        if (error.parent && error.parent.sql) {
+             console.error("SQL Gerado (aproximado):", error.parent.sql);
+        } else if (error.sql) {
+            console.error("SQL Gerado:", error.sql);
+        }
+        throw error; // Re-lança o erro para ser tratado pela camada superior (rota)
     }
 };
 

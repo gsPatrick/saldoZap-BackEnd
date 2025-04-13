@@ -31,23 +31,51 @@ router.post('/', /* authenticateApiKey, */ async (req, res) => {
 });
 
 // Rota GET / com filtro por nome_categoria (ADICIONAL OPCIONAL)
-router.get('/', async (req, res) => {
-    // Adiciona 'tipo' ao destructuring
-    const { id_usuario, periodo, tipo } = req.query;
+router.get('/', /* authenticateApiKey, */ async (req, res) => {
+    // Pega todos os parâmetros relevantes da query string
+    const { id_usuario, periodo, tipo, nome_categoria } = req.query; // <<< ADICIONADO: nome_categoria
 
+    // Validação Obrigatória: id_usuario
     if (!id_usuario) {
         return res.status(400).json({ error: "User ID (id_usuario) is required to list transactions." });
     }
+    const idUsuarioNum = parseInt(id_usuario, 10);
+    if (isNaN(idUsuarioNum)) {
+        return res.status(400).json({ error: "Invalid id_usuario format." });
+    }
+
+    // Monta o objeto de filtros adicionais APENAS com os filtros extras
+    const additionalFilters = {};
+    if (nome_categoria !== undefined) { // Verifica se o parâmetro foi passado (mesmo que vazio)
+        // Você pode querer validar se nome_categoria não é vazio aqui, se necessário
+        // if (nome_categoria.trim() === '') return res.status(400).json({ error: "nome_categoria cannot be empty." });
+        additionalFilters.nome_categoria = nome_categoria;
+        console.log(`[Rota GET /transacoes] Filtro nome_categoria recebido: ${nome_categoria}`);
+    }
+    // Adicione outros filtros extras aqui se precisar no futuro
+    // if (req.query.outro_filtro) {
+    //    additionalFilters.outro_filtro = req.query.outro_filtro;
+    // }
 
     try {
-        // Passa o 'tipo' para o serviço
-        const transacoes = await transacaoService.listTransactions(parseInt(id_usuario), periodo, tipo);
+        // Chama o serviço passando:
+        // 1. id_usuario (número)
+        // 2. periodo (string ou objeto - o service trata)
+        // 3. tipo (string 'despesa'/'receita' ou null)
+        // 4. additionalFilters (objeto contendo nome_categoria, se houver)
+        const transacoes = await transacaoService.listTransactions(
+            idUsuarioNum,
+            periodo, // Passa o período como recebido
+            tipo,    // Passa o tipo como recebido
+            additionalFilters // Passa o objeto com filtros extras
+        );
         res.json(transacoes);
     } catch (error) {
         console.error("Erro na rota GET /transacoes:", error);
-        res.status(500).json({ error: "Internal server error listing transactions." });
+        // Retorna a mensagem de erro do service, se houver
+        res.status(500).json({ error: error.message || "Internal server error listing transactions." });
     }
-}); 
+});
 
 router.get('/:id_transacao', async (req, res) => {
     const { id_transacao } = req.params;

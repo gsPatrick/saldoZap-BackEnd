@@ -31,48 +31,48 @@ router.post('/', /* authenticateApiKey, */ async (req, res) => {
 });
 
 // Rota GET / com filtro por nome_categoria (ADICIONAL OPCIONAL)
-router.get('/', /* authenticateApiKey, */ async (req, res) => {
-    // Pega todos os parâmetros relevantes da query string
-    const { id_usuario, periodo, tipo, nome_categoria } = req.query; // <<< ADICIONADO: nome_categoria
+router.get('/', async (req, res) => {
+    // Pega todos os parâmetros esperados da query
+    const { id_usuario, startDate, endDate, tipo, nome_categoria } = req.query; // <<< Lê startDate/endDate
 
     // Validação Obrigatória: id_usuario
     if (!id_usuario) {
-        return res.status(400).json({ error: "User ID (id_usuario) is required to list transactions." });
+        return res.status(400).json({ error: "User ID (id_usuario) is required." });
     }
     const idUsuarioNum = parseInt(id_usuario, 10);
     if (isNaN(idUsuarioNum)) {
         return res.status(400).json({ error: "Invalid id_usuario format." });
     }
 
-    // Monta o objeto de filtros adicionais APENAS com os filtros extras
+    // <<< Monta o objeto periodo APENAS se startDate e endDate forem válidos >>>
+    let filtroPeriodo = null;
+    if (startDate && endDate && /\d{4}-\d{2}-\d{2}/.test(startDate) && /\d{4}-\d{2}-\d{2}/.test(endDate)) {
+        filtroPeriodo = { startDate, endDate }; // Passa como objeto se ambos existirem e forem válidos
+        console.log(`[Rota GET /transacoes] Filtro de período por startDate/endDate:`, filtroPeriodo);
+    } else if (req.query.periodo) { // Fallback para o parâmetro 'periodo' se startDate/endDate não vierem
+        filtroPeriodo = req.query.periodo;
+         console.log(`[Rota GET /transacoes] Filtro de período por string: ${filtroPeriodo}`);
+    }
+
+
+    // Monta filtros adicionais
     const additionalFilters = {};
-    if (nome_categoria !== undefined) { // Verifica se o parâmetro foi passado (mesmo que vazio)
-        // Você pode querer validar se nome_categoria não é vazio aqui, se necessário
-        // if (nome_categoria.trim() === '') return res.status(400).json({ error: "nome_categoria cannot be empty." });
+    if (nome_categoria !== undefined) {
         additionalFilters.nome_categoria = nome_categoria;
         console.log(`[Rota GET /transacoes] Filtro nome_categoria recebido: ${nome_categoria}`);
     }
-    // Adicione outros filtros extras aqui se precisar no futuro
-    // if (req.query.outro_filtro) {
-    //    additionalFilters.outro_filtro = req.query.outro_filtro;
-    // }
 
     try {
-        // Chama o serviço passando:
-        // 1. id_usuario (número)
-        // 2. periodo (string ou objeto - o service trata)
-        // 3. tipo (string 'despesa'/'receita' ou null)
-        // 4. additionalFilters (objeto contendo nome_categoria, se houver)
+        // Chama o serviço passando os parâmetros corretos
         const transacoes = await transacaoService.listTransactions(
             idUsuarioNum,
-            periodo, // Passa o período como recebido
-            tipo,    // Passa o tipo como recebido
-            additionalFilters // Passa o objeto com filtros extras
+            filtroPeriodo, // Passa o objeto {startDate, endDate} ou a string 'periodo' ou null
+            tipo,          // Passa o tipo como recebido
+            additionalFilters // Passa o objeto com nome_categoria
         );
         res.json(transacoes);
     } catch (error) {
         console.error("Erro na rota GET /transacoes:", error);
-        // Retorna a mensagem de erro do service, se houver
         res.status(500).json({ error: error.message || "Internal server error listing transactions." });
     }
 });

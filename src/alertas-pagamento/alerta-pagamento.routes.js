@@ -183,24 +183,33 @@ router.put('/by-code/:codigo_unico/status', authenticateApiKey, async (req, res)
 });
 
 // Rota para DELETAR um alerta pelo CÓDIGO ÚNICO
-router.delete('/by-code/:codigo_unico', authenticateApiKey, async (req, res) => { // <<< MIDDLEWARE APLICADO
+router.delete('/by-code/:codigo_unico', authenticateApiKey, async (req, res) => {
     const { codigo_unico } = req.params;
-    // Pega id_usuario da QUERY STRING (mais comum para DELETE sem corpo)
-    const id_usuario = req.query.id_usuario;
+    // Pega id_usuario da QUERY STRING
+    const id_usuario_query = req.query.id_usuario;
 
-    if (!id_usuario || isNaN(parseInt(id_usuario, 10))) { // Valida se id_usuario existe e é numérico
+    if (!id_usuario_query || isNaN(parseInt(id_usuario_query, 10))) {
         return res.status(400).json({ error: "Missing or invalid id_usuario in query string." });
     }
+    const id_usuario = parseInt(id_usuario_query, 10);
+
     if (!codigo_unico) {
         return res.status(400).json({ error: "Missing codigo_unico parameter." });
     }
 
     try {
-        // Passa o id_usuario da query para o service validar propriedade
-        const sucesso = await alertaPagamentoService.deletePaymentAlertByCode(codigo_unico, parseInt(id_usuario, 10));
-        if (sucesso) {
-            res.status(204).send();
+        // Chama o serviço modificado, que agora retorna detalhes ou null
+        const deletedDetails = await alertaPagamentoService.deletePaymentAlertByCode(codigo_unico, id_usuario);
+
+        if (deletedDetails) {
+             // <<< ALTERAÇÃO: Retorna 200 OK com os detalhes >>>
+             res.status(200).json({
+                 message: "Alerta de pagamento excluído com sucesso.",
+                 details: deletedDetails // Envia os detalhes do item excluído
+             });
+             // <<< FIM DA ALTERAÇÃO >>>
         } else {
+            // Mantém 404 se o serviço retornou null (não encontrado)
             res.status(404).json({ message: "Payment alert with this code not found for this user." });
         }
     } catch (error) {

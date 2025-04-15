@@ -240,17 +240,52 @@ const deletePaymentAlert = async (id_alerta) => {
  * @returns {Promise<boolean>} True se deletado, false caso contrário.
  */
 const deletePaymentAlertByCode = async (codigo_unico, id_usuario) => {
+    // Garante que id_usuario seja número
+    const userIdNum = parseInt(id_usuario, 10);
+    if(isNaN(userIdNum)) {
+        console.error("[deletePaymentAlertByCode] ID de usuário inválido:", id_usuario);
+        return null;
+    }
+    if (!codigo_unico) {
+         console.error("[deletePaymentAlertByCode] Código único não fornecido.");
+         return null;
+    }
+
+    let alertToDelete; // Variável para guardar o alerta encontrado
+
     try {
-        const alertaDeletadoCount = await AlertaPagamento.destroy({
+        // Passo 1: Encontrar o alerta
+        alertToDelete = await AlertaPagamento.findOne({
             where: {
                 codigo_unico: codigo_unico,
-                id_usuario: id_usuario // Garante que só o dono delete
-            }
+                id_usuario: userIdNum
+            },
+            // Opcional: selecionar atributos específicos
+            // attributes: ['id_alerta', 'valor', 'tipo', 'data_vencimento', 'descricao', 'codigo_unico', 'status']
         });
-        return alertaDeletadoCount > 0;
+
+        // Se não encontrou, retorna null
+        if (!alertToDelete) {
+            console.log(`[deletePaymentAlertByCode] Alerta ${codigo_unico} não encontrado para usuário ${userIdNum}.`);
+            return null;
+        }
+
+        // Passo 2: Armazenar detalhes
+        const deletedDetails = alertToDelete.get({ plain: true });
+
+        // Passo 3: Deletar o alerta encontrado
+        // IMPORTANTE: Verifique se você realmente quer deletar alertas pagos/cancelados por esta rota.
+        // Se quiser deletar APENAS os pendentes, adicione 'status: 'pendente'' na cláusula where do findOne.
+        // Se o findOne já encontrou (independente do status), o destroy aqui vai deletar.
+        await alertToDelete.destroy();
+        console.log(`[deletePaymentAlertByCode] Alerta ${codigo_unico} (ID: ${deletedDetails.id_alerta}) deletado com sucesso.`);
+
+        // Passo 4: Retornar os detalhes armazenados
+        return deletedDetails;
+
     } catch (error) {
-        console.error("Erro ao deletar alerta de pagamento por código:", error);
-        throw error;
+        console.error(`Erro ao tentar deletar alerta por código ${codigo_unico} para usuário ${userIdNum}:`, error);
+        throw error; // Re-lança o erro
     }
 };
 

@@ -369,21 +369,53 @@ const deleteTransaction = async (id_transacao) => {
 };
 
 const deleteTransactionByCode = async (codigo_unico, id_usuario) => {
-     // Garante que id_usuario seja número
-     const userIdNum = parseInt(id_usuario, 10);
-     if(isNaN(userIdNum)) {
-         throw new Error("ID de usuário inválido fornecido para deleteTransactionByCode.");
-     }
+    // Garante que id_usuario seja número
+    const userIdNum = parseInt(id_usuario, 10);
+    if(isNaN(userIdNum)) {
+        console.error("[deleteTransactionByCode] ID de usuário inválido:", id_usuario);
+        // Considerar lançar erro ou retornar null dependendo da sua preferência de tratamento
+        // throw new Error("ID de usuário inválido fornecido para deleteTransactionByCode.");
+        return null; // Retorna null se ID for inválido
+    }
+    if (!codigo_unico) {
+         console.error("[deleteTransactionByCode] Código único não fornecido.");
+         return null;
+    }
+
+    let transactionToDelete; // Variável para guardar a transação encontrada
+
     try {
-        const transacaoDeletadaCount = await Transacao.destroy({
+        // Passo 1: Encontrar a transação
+        transactionToDelete = await Transacao.findOne({
             where: {
                 codigo_unico: codigo_unico,
                 id_usuario: userIdNum
-            }
+            },
+            // Opcional: selecionar apenas os atributos que você quer retornar
+            // attributes: ['id_transacao', 'valor', 'tipo', 'nome_categoria', 'data_transacao', 'descricao', 'codigo_unico']
         });
-        return transacaoDeletadaCount > 0;
+
+        // Se não encontrou, retorna null
+        if (!transactionToDelete) {
+            console.log(`[deleteTransactionByCode] Transação ${codigo_unico} não encontrada para usuário ${userIdNum}.`);
+            return null;
+        }
+
+        // Passo 2: Armazenar detalhes (o objeto inteiro ou campos específicos)
+        // Usaremos o objeto inteiro aqui para simplicidade, convertido para plain object
+        const deletedDetails = transactionToDelete.get({ plain: true });
+
+        // Passo 3: Deletar a transação encontrada
+        await transactionToDelete.destroy();
+        console.log(`[deleteTransactionByCode] Transação ${codigo_unico} (ID: ${deletedDetails.id_transacao}) deletada com sucesso.`);
+
+        // Passo 4: Retornar os detalhes armazenados
+        return deletedDetails;
+
     } catch (error) {
-        console.error(`Erro ao excluir transação por código ${codigo_unico} para usuário ${id_usuario}:`, error);
+        console.error(`Erro ao tentar deletar transação por código ${codigo_unico} para usuário ${userIdNum}:`, error);
+        // Considerar o que fazer em caso de erro durante find ou destroy
+        // Re-lançar o erro pode ser apropriado para a rota tratar como 500
         throw error;
     }
 };

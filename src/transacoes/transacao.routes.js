@@ -1,6 +1,8 @@
 // src/transacoes/transacao.routes.js
 const express = require('express');
 const transacaoService = require('./transacao.service');
+const authenticateApiKey = require('../middleware/authenticateApiKey'); // <<< 1. IMPORTAR (se já não estiver)
+
 
 const router = express.Router();
 
@@ -239,26 +241,32 @@ router.get('/statement/:id_usuario', async (req, res) => {
 });
 
 
-router.delete('/by-code/:codigo_unico', async (req, res) => {
+router.delete('/by-code/:codigo_unico', authenticateApiKey, async (req, res) => {
     const { codigo_unico } = req.params;
-    // ASSUMINDO que você tem o ID do usuário logado disponível em req.user.id_usuario
-    // Adapte conforme sua autenticação. Se não tiver, PRECISA implementar um jeito de pegar o id_usuario.
-    const id_usuario = req.user?.id_usuario; 
+    const id_usuario_query = req.query.id_usuario;
 
-    if (!id_usuario) {
-         return res.status(401).json({ error: "User authentication required." });
+    if (!id_usuario_query || isNaN(parseInt(id_usuario_query, 10))) {
+         return res.status(400).json({ error: "Missing or invalid id_usuario in query string." });
     }
+    const id_usuario = parseInt(id_usuario_query, 10);
+
     if (!codigo_unico) {
         return res.status(400).json({ error: "Missing codigo_unico parameter." });
     }
 
     try {
-        // Passa id_usuario para o service por segurança
-        const sucesso = await transacaoService.deleteTransactionByCode(codigo_unico, id_usuario); 
-        if (sucesso) {
-            res.status(204).send(); // Sucesso, sem conteúdo
+        // Chama o serviço modificado, que agora retorna detalhes ou null
+        const deletedDetails = await transacaoService.deleteTransactionByCode(codigo_unico, id_usuario);
+
+        if (deletedDetails) {
+            // <<< ALTERAÇÃO: Retorna 200 OK com os detalhes >>>
+            res.status(200).json({
+                message: "Transação excluída com sucesso.",
+                details: deletedDetails // Envia os detalhes do item excluído
+            });
+            // <<< FIM DA ALTERAÇÃO >>>
         } else {
-            // IMPORTANTE: Retorna 404 aqui, o N8N vai usar isso
+            // Mantém 404 se o serviço retornou null (não encontrado)
             res.status(404).json({ message: "Transaction with this code not found for this user." });
         }
     } catch (error) {

@@ -1,7 +1,7 @@
 // src/auth/auth.service.js
 const Usuario = require('../usuarios/usuario.model');
 const { Op, fn, col, literal } = require('sequelize'); // <<< NECESSÁRIO para a função
-=
+
 const registerWebsiteUser = async (telefone, email) => {
     try {
         let usuario = await Usuario.findOne({ where: { telefone } });

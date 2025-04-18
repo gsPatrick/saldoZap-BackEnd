@@ -17,7 +17,7 @@ router.post('/', async (req, res) => {
 });
 
 
-router.get('/allUsers', authenticateApiKey, async (req, res) => { // <<< Aplicar Middleware
+router.get('/allUsers', async (req, res) => { // <<< Aplicar Middleware
     console.log('[Rota GET /usuarios] Requisição recebida. Query:', req.query);
     try {
         // Extrai parâmetros de paginação e filtro da query string

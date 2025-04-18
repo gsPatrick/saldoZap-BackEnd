@@ -109,7 +109,7 @@ router.post('/subscription', authenticateApiKey, async (req, res) => {
 router.get('/stats', async (req, res) => {
     console.log('[Rota GET /dashboard/stats] Requisição recebida.'); // Log da rota
     try {
-        const stats = await dashboardService.getDashboardStats();
+        const stats = await authService.getDashboardStats();
         res.status(200).json(stats); // Retorna 200 OK com as estatísticas
     } catch (error) {
         console.error('[Rota GET /dashboard/stats] Erro:', error);

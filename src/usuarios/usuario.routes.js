@@ -16,6 +16,41 @@ router.post('/', async (req, res) => {
     }
 });
 
+
+router.get('/allUsers', authenticateApiKey, async (req, res) => { // <<< Aplicar Middleware
+    console.log('[Rota GET /usuarios] Requisição recebida. Query:', req.query);
+    try {
+        // Extrai parâmetros de paginação e filtro da query string
+        const options = {
+            page: req.query.page,   // Ex: ?page=2
+            limit: req.query.limit,  // Ex: ?limit=20
+            search: req.query.search,// Ex: ?search=joao
+            plan: req.query.plan    // Ex: ?plan=Premium
+        };
+
+        // Chama o serviço para listar usuários com as opções
+        const result = await usuarioService.listUsers(options);
+
+        // Calcula informações de paginação para a resposta
+        const page = parseInt(options.page, 10) || 1;
+        const limit = parseInt(options.limit, 10) || 50; // Usar mesmo default/max do service
+        if (limit > 200) limit = 200;
+        if (limit <= 0) limit = 50;
+
+        res.status(200).json({
+            users: result.rows, // Lista de usuários da página atual
+            total: result.count, // Contagem total de usuários (para paginação no frontend)
+            currentPage: page,
+            totalPages: Math.ceil(result.count / limit) // Calcula o total de páginas
+        });
+
+    } catch (error) {
+        console.error("Erro na rota GET /usuarios:", error);
+        res.status(500).json({ error: error.message || "Erro interno ao listar usuários." });
+    }
+});
+
+
 router.get('/', async (req, res) => {
     const { telefone } = req.query; // Pega o parâmetro 'telefone' da URL (?telefone=...)
 

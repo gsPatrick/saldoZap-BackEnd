@@ -191,10 +191,143 @@ const registerOrUpdateSubscription = async (nome, email, telefone, plano, duraca
     }
 };
 
+
+const getDashboardStats = async () => {
+    console.log("[DashboardService] Buscando estatísticas...");
+    try {
+        const hoje = new Date();
+
+        // --- Contagens de Usuários ---
+
+        // Contagem Total
+        const totalUsuarios = await Usuario.count();
+        console.log(`[DashboardService] Total de usuários: ${totalUsuarios}`);
+
+        // Contagem de Assinantes Ativos (assinatura_ativa = true E não expirada)
+        const totalAssinantesAtivos = await Usuario.count({
+            where: {
+                assinatura_ativa: true,
+                assinatura_expira_em: {
+                    [Op.or]: [
+                        { [Op.eq]: null }, // Assinatura nunca expira (vitalícia?)
+                        { [Op.gte]: hoje }  // Assinatura ainda válida hoje
+                    ]
+                }
+            }
+        });
+         console.log(`[DashboardService] Total de assinantes ativos: ${totalAssinantesAtivos}`);
+
+        // Contagem de Usuários em Trial Ativo
+        const totalTrialAtivo = await Usuario.count({
+            where: {
+                // Não pode ter assinatura ativa PAGA ao mesmo tempo que trial
+                [Op.or]: [
+                     { assinatura_ativa: false },
+                     { assinatura_ativa: null } // Considera nulo como falso
+                ],
+                trial_fim: {
+                    [Op.gte]: hoje // Trial termina hoje ou no futuro
+                }
+            }
+        });
+        console.log(`[DashboardService] Total de usuários em trial ativo: ${totalTrialAtivo}`);
+
+         // Contagem de Usuários Free (Nem trial ativo, nem assinatura ativa)
+         const totalFree = await Usuario.count({
+            where: {
+                 [Op.or]: [
+                     { assinatura_ativa: false },
+                     { assinatura_ativa: null }
+                 ],
+                 [Op.or]: [
+                    { trial_fim: { [Op.eq]: null } }, // Nunca teve trial
+                    { trial_fim: { [Op.lt]: hoje } }   // Trial expirou
+                 ]
+            }
+         });
+         console.log(`[DashboardService] Total de usuários free (sem trial/assinatura ativa): ${totalFree}`);
+
+
+        // Contagem de Usuários por Plano (APENAS entre os assinantes ativos)
+        const contagemPorPlano = await Usuario.findAll({
+            attributes: [
+                // Se 'plano' pode ser nulo, usa COALESCE para agrupar como 'Desconhecido'
+                [fn('COALESCE', col('plano'), 'Desconhecido'), 'planoNome'],
+                [fn('COUNT', col('id_usuario')), 'count'] // Conta usuários
+            ],
+            where: {
+                // Filtra apenas os que consideramos assinantes ativos
+                 assinatura_ativa: true,
+                 assinatura_expira_em: {
+                    [Op.or]: [
+                        { [Op.eq]: null },
+                        { [Op.gte]: hoje }
+                    ]
+                 }
+            },
+            group: [literal('"planoNome"')] // Agrupa pelo alias definido acima
+            // Raw true para facilitar acesso aos dados
+            // raw: true // Descomente se preferir objetos simples
+        });
+
+        // Formata o resultado da contagem por plano
+        const usuariosPorPlanoFormatado = contagemPorPlano.map(item => {
+             // Se usou raw:true, acesse item.planoNome e item.count
+             // Se não usou raw:true, acesse item.get('planoNome') e item.get('count')
+             const planoData = item.get ? item.get() : item; // Pega o objeto de dados
+             return {
+                 plano: planoData.planoNome,
+                 count: parseInt(planoData.count, 10) // Garante que count seja número
+             }
+        });
+        console.log("[DashboardService] Contagem por plano:", usuariosPorPlanoFormatado);
+
+
+        // --- Cálculo de Lucro (Exemplo SIMPLIFICADO - NÃO RECOMENDADO PARA PRODUÇÃO) ---
+        // Idealmente, isso viria de outra fonte (gateway de pagamento, tabela de pagamentos)
+        let lucroEstimadoPremium = 0;
+        let lucroEstimadoBasic = 0;
+        usuariosPorPlanoFormatado.forEach(p => {
+            if (p.plano.toLowerCase().includes('premium')) { // Verifica se nome contém 'premium'
+                lucroEstimadoPremium += p.count * 29.90; // Valor Fixo Exemplo
+            } else if (p.plano.toLowerCase().includes('basic')) { // Verifica se nome contém 'basic'
+                 lucroEstimadoBasic += p.count * 9.90; // Valor Fixo Exemplo
+            }
+            // Adicionar lógica para outros planos
+        });
+        const lucroEstimadoTotal = lucroEstimadoPremium + lucroEstimadoBasic;
+        // -------------------------------------------------------------------------
+
+        // Monta o objeto de resposta final
+        const stats = {
+            totalUsuarios: totalUsuarios || 0,
+            usuariosAssinantesAtivos: totalAssinantesAtivos || 0, // Renomeado para clareza
+            usuariosTrial: totalTrialAtivo || 0,
+            usuariosFree: totalFree || 0,
+            usuariosPorPlano: usuariosPorPlanoFormatado || [],
+            // --- Retornando lucro estimado ---
+             lucroEstimado: {
+                 premium: parseFloat(lucroEstimadoPremium.toFixed(2)),
+                 basic: parseFloat(lucroEstimadoBasic.toFixed(2)),
+                 total: parseFloat(lucroEstimadoTotal.toFixed(2))
+             }
+            // ---------------------------------
+        };
+
+        console.log("[DashboardService] Estatísticas finais:", stats);
+        return stats;
+
+    } catch (error) {
+        console.error("[DashboardService] Erro ao buscar estatísticas:", error);
+        throw new Error("Erro ao buscar estatísticas do dashboard."); // Lança erro genérico
+    }
+};
+
 module.exports = {
     registerWebsiteUser,
     registerWhatsAppUser,
     associateEmailWhatsAppUser,
     getUserByPhone,
-    registerOrUpdateSubscription
+    registerOrUpdateSubscription,
+    getDashboardStats
 };

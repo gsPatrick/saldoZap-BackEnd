@@ -71,5 +71,39 @@ router.get('/user-by-phone/:telefone', async (req, res) => {
     }
 });
 
+router.post('/subscription', authenticateApiKey, async (req, res) => {
+    // Pega os campos do corpo, incluindo 'plano' e 'duracaoPlano'
+    const { nome, email, telefone, plano, duracaoPlano } = req.body;
+
+    // Validação dos campos recebidos
+    if (!nome || !email || !telefone || !plano || !duracaoPlano) {
+        return res.status(400).json({ error: "Campos obrigatórios ausentes: nome, email, telefone, plano, duracaoPlano." });
+    }
+    // Valida a duração para cálculo da expiração
+    if (!['mensal', 'anual'].includes(duracaoPlano.toLowerCase())) {
+         return res.status(400).json({ error: "Valor inválido para duracaoPlano. Use 'mensal' ou 'anual'." });
+    }
+    // Adicione mais validações (formato email, etc.)
+
+    try {
+        // Chama o serviço com os novos parâmetros
+        const result = await authService.registerOrUpdateSubscription(
+            nome,
+            email,
+            telefone,
+            plano, // Nome do plano (ex: "Premium Anual")
+            duracaoPlano.toLowerCase() // 'mensal' ou 'anual' para cálculo
+        );
+        res.status(result.isNewUser ? 201 : 200).json(result.usuario);
+    } catch (error) {
+        console.error("Erro na rota POST /subscription:", error);
+        if (error.message.includes('validação') || error.message.includes('Já existe')) {
+             res.status(400).json({ error: error.message });
+        } else {
+             res.status(500).json({ error: "Erro interno ao processar a assinatura." });
+        }
+    }
+});
+
 
 module.exports = router;

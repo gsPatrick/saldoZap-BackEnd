@@ -34,7 +34,17 @@ const Usuario = sequelize.define('Usuario', {
     type: DataTypes.BOOLEAN,
     defaultValue: false,
     field: 'assinatura_ativa'
-  }
+  },
+  assinatura_expira_em: {
+    type: DataTypes.DATE, // Ou DATEONLY se não precisar da hora
+    allowNull: true,      // Permite nulo para quem não tem assinatura
+    field: 'assinatura_expira_em'
+  },
+  plano: {
+    type: DataTypes.STRING,
+    allowNull: true,
+    field: 'plano'
+  },
 }, {
   tableName: 'usuarios', // Nome da tabela no banco de dados (importante!)
   timestamps: false       // Desativa timestamps automáticos (createdAt, updatedAt) se não usar

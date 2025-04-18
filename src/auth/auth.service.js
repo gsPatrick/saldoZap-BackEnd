@@ -126,9 +126,75 @@ const getUserByPhone = async (telefone) => {
     }
 };
 
+const registerOrUpdateSubscription = async (nome, email, telefone, plano, duracaoPlano) => {
+    console.log(`[Subscription] Iniciando registro/update para Tel: ${telefone}, Plano: ${plano}, Duração: ${duracaoPlano}`);
+    try {
+        let usuario = await Usuario.findOne({ where: { telefone } });
+        let isNewUser = false;
+
+        // Calcular data de expiração baseada na DURAÇÃO
+        const hoje = new Date();
+        let dataExpiracao = new Date();
+        if (duracaoPlano === 'mensal') {
+            dataExpiracao.setMonth(hoje.getMonth() + 1);
+            console.log(`[Subscription] Data de expiração calculada (mensal): ${dataExpiracao.toISOString()}`);
+        } else if (duracaoPlano === 'anual') {
+            dataExpiracao.setFullYear(hoje.getFullYear() + 1);
+            console.log(`[Subscription] Data de expiração calculada (anual): ${dataExpiracao.toISOString()}`);
+        } else {
+            console.error(`[Subscription] Duração de plano inválida: ${duracaoPlano}`);
+            throw new Error(`Duração de plano inválida: ${duracaoPlano}. Use 'mensal' ou 'anual'.`);
+        }
+
+        // Objeto com os dados a serem atualizados/criados
+        const userData = {
+             nome: nome,
+             email: email,
+             telefone: telefone, // Necessário para create
+             assinatura_ativa: true,
+             assinatura_expira_em: dataExpiracao,
+             plano: plano, // <<< SALVA O NOME DO PLANO
+             trial_fim: null // Anula o trial
+        };
+
+
+        if (usuario) {
+            // Usuário EXISTE: Atualiza
+            console.log(`[Subscription] Usuário ${usuario.id_usuario} encontrado. Atualizando...`);
+            // Remove telefone dos updates (não pode mudar a chave)
+            delete userData.telefone;
+            await usuario.update(userData); // Atualiza com os novos dados
+            await usuario.reload(); // Recarrega para garantir dados atualizados
+            console.log(`[Subscription] Usuário ${usuario.id_usuario} atualizado com sucesso.`);
+        } else {
+            // Usuário NÃO EXISTE: Cria
+            console.log(`[Subscription] Usuário não encontrado para tel ${telefone}. Criando novo...`);
+            isNewUser = true;
+            usuario = await Usuario.create(userData); // Cria com todos os dados
+            console.log(`[Subscription] Novo usuário ${usuario.id_usuario} criado com sucesso.`);
+        }
+
+        return { usuario, isNewUser };
+
+    } catch (error) {
+        console.error(`Erro ao registrar/atualizar assinatura para tel ${telefone}:`, error);
+         if (error.name === 'SequelizeValidationError') {
+             const messages = error.errors.map(e => e.message).join(', ');
+             throw new Error(`Erro de validação ao salvar usuário: ${messages}`);
+         } else if (error.name === 'SequelizeUniqueConstraintError') {
+              const fields = error.fields ? Object.keys(error.fields).join(', ') : 'desconhecido';
+              // Verificar qual campo causou a duplicidade (email ou telefone)
+              let fieldName = fields.includes('email') ? 'email' : 'telefone';
+              throw new Error(`Erro: Já existe um usuário com este ${fieldName}.`);
+         }
+        throw error; // Re-lança outros erros
+    }
+};
+
 module.exports = {
     registerWebsiteUser,
     registerWhatsAppUser,
     associateEmailWhatsAppUser,
-    getUserByPhone 
+    getUserByPhone,
+    registerOrUpdateSubscription
 };

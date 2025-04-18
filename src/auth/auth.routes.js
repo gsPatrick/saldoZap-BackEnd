@@ -1,6 +1,7 @@
 // src/auth/auth.routes.js
 const express = require('express');
 const authService = require('./auth.service');
+const authenticateApiKey = require('../middleware/authenticateApiKey'); // <<< 1. IMPORTAR (se já não estiver)
 
 const router = express.Router();
 

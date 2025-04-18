@@ -82,15 +82,27 @@ app.get('/api/v1', (req, res) => {
 
 // --- Inicialização do Servidor ---
 const startServer = async () => {
-    // Primeiro, sincroniza o banco de dados
+    // 1. Sincroniza o banco
     await syncDatabase();
 
-    // Depois, inicia o servidor Express para ouvir as requisições
+    // 2. Inicia o servidor Express
     app.listen(PORT, () => {
         console.log(`API Smart-Custo rodando na porta ${PORT}`);
+
+        // <<< PASSO 3: INICIA O AGENDADOR DEPOIS QUE O SERVIDOR ESTÁ RODANDO >>>
+        try {
+            console.log('Iniciando o agendador de alertas...');
+            alertScheduler.scheduleTask(); // <<< CHAMADA DA FUNÇÃO
+            // O log de agendamento ("[AlertScheduler] Agendando envio...") deve aparecer depois desta linha
+        } catch (schedulerError) {
+            console.error('Erro ao iniciar o agendador de alertas:', schedulerError);
+            // Decida se a API deve parar se o scheduler falhar ao iniciar
+        }
+        // <<< FIM DA INICIALIZAÇÃO DO AGENDADOR >>>
+
     });
 };
 
-// Chama a função para iniciar o servidor (e a sincronização)
+// Chama a função para iniciar tudo
 startServer();
 // ---------------------------------

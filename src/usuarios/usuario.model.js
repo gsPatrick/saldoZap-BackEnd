@@ -1,12 +1,13 @@
+// src/usuarios/usuario.model.js
 const { DataTypes } = require('sequelize');
-const sequelize = require('../config/database'); // Importa a instância Sequelize configurada
+const sequelize = require('../config/database');
 
 const Usuario = sequelize.define('Usuario', {
   id_usuario: {
     type: DataTypes.INTEGER,
     primaryKey: true,
     autoIncrement: true,
-    field: 'id_usuario' // Mapeamento para o nome da coluna no banco (se diferente do nome do atributo JS)
+    field: 'id_usuario'
   },
   nome: {
     type: DataTypes.STRING,
@@ -36,8 +37,8 @@ const Usuario = sequelize.define('Usuario', {
     field: 'assinatura_ativa'
   },
   assinatura_expira_em: {
-    type: DataTypes.DATE, // Ou DATEONLY se não precisar da hora
-    allowNull: true,      // Permite nulo para quem não tem assinatura
+    type: DataTypes.DATE,
+    allowNull: true,
     field: 'assinatura_expira_em'
   },
   plano: {
@@ -45,9 +46,17 @@ const Usuario = sequelize.define('Usuario', {
     allowNull: true,
     field: 'plano'
   },
+  // --- NOVO CAMPO ---
+  primeiraMensagem: {
+    type: DataTypes.BOOLEAN,
+    allowNull: false,       // Não pode ser nulo
+    defaultValue: true,     // Começa como true (primeira mensagem pendente)
+    field: 'primeira_mensagem' // Nome da coluna no banco de dados
+  }
+  // --- FIM NOVO CAMPO ---
 }, {
-  tableName: 'usuarios', // Nome da tabela no banco de dados (importante!)
-  timestamps: false       // Desativa timestamps automáticos (createdAt, updatedAt) se não usar
+  tableName: 'usuarios',
+  timestamps: false
 });
 
 module.exports = Usuario;

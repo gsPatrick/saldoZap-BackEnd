@@ -75,7 +75,7 @@ const getUserByPhone = async (telefone) => {
     try {
         const usuario = await Usuario.findOne({ where: { telefone } });
         if (usuario) {
-            const trialEndDate = usuario.trial_fim ? new Date(usuario.trial_fim) : null; // Handle null trial_fim
+            const trialEndDate = usuario.trial_fim ? new Date(usuario.trial_fim) : null;
             const today = new Date();
             let trialDaysRemaining = 0;
             let trialStatus = null;
@@ -83,7 +83,7 @@ const getUserByPhone = async (telefone) => {
             let isPaidPlan = false;
             let nextBillingDate = null;
 
-            if (trialEndDate) { // Só calcula trial se trial_fim existir
+            if (trialEndDate) {
                 isFreePlan = true;
                 trialDaysRemaining = Math.ceil((trialEndDate - today) / (1000 * 60 * 60 * 24));
                 if (trialDaysRemaining < 0) {
@@ -107,7 +107,8 @@ const getUserByPhone = async (telefone) => {
                 trialDaysRemaining: trialDaysRemaining,
                 trialStatus: trialStatus,
                 isPaidPlan: isPaidPlan,
-                nextBillingDate: nextBillingDate
+                nextBillingDate: nextBillingDate,
+                primeiraMensagem: usuario.primeiraMensagem // <<< ADICIONADO AQUI
             };
         } else {
             return {
@@ -118,12 +119,42 @@ const getUserByPhone = async (telefone) => {
                 trialDaysRemaining: 0,
                 trialStatus: null,
                 isPaidPlan: false,
-                nextBillingDate: null
+                nextBillingDate: null,
+                primeiraMensagem: null // <<< ADICIONADO AQUI (ou false, se preferir)
             };
         }
     } catch (error) {
         console.error("Erro ao buscar usuário por telefone:", error);
         throw error;
+    }
+};
+
+const markFirstMessageSent = async (telefone) => {
+    try {
+        const usuario = await Usuario.findOne({ where: { telefone } });
+
+        if (!usuario) {
+            throw new Error("Usuário não encontrado para marcar primeira mensagem.");
+        }
+
+        // Verifica se precisa atualizar (evita escrita desnecessária no DB)
+        if (usuario.primeiraMensagem === true) {
+            usuario.primeiraMensagem = false;
+            await usuario.save();
+            console.log(`[AuthService] Campo 'primeiraMensagem' atualizado para false para o telefone ${telefone}.`);
+            return usuario; // Retorna o usuário atualizado
+        } else {
+             console.log(`[AuthService] Campo 'primeiraMensagem' já estava false para o telefone ${telefone}. Nenhuma atualização necessária.`);
+             return usuario; // Retorna o usuário como está
+        }
+
+    } catch (error) {
+        console.error(`Erro ao marcar primeira mensagem para telefone ${telefone}:`, error);
+        // Re-lança o erro para ser tratado na camada de rota
+        if (error.message.includes("Usuário não encontrado")) {
+            throw error;
+        }
+        throw new Error("Erro interno ao atualizar status da primeira mensagem.");
     }
 };
 
@@ -324,11 +355,14 @@ const getDashboardStats = async () => {
     }
 };
 
+
+
 module.exports = {
     registerWebsiteUser,
     registerWhatsAppUser,
     associateEmailWhatsAppUser,
     getUserByPhone,
     registerOrUpdateSubscription,
-    getDashboardStats
+    getDashboardStats,
+    markFirstMessageSent
 };

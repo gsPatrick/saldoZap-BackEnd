@@ -118,5 +118,32 @@ router.get('/stats', async (req, res) => {
     }
 });
 
+router.patch('/mark-first-message/:telefone', async (req, res) => {
+    const { telefone } = req.params;
+
+    if (!telefone) {
+        return res.status(400).json({ error: "Número de telefone é obrigatório na URL." });
+    }
+
+    try {
+        // Chama o serviço para atualizar o campo 'primeiraMensagem' para false
+        const usuarioAtualizado = await authService.markFirstMessageSent(telefone);
+
+        // Responde com sucesso (pode incluir o usuário atualizado se desejar)
+        res.status(200).json({
+            message: `Status 'primeiraMensagem' atualizado para false para o telefone ${telefone}.`,
+            // usuario: usuarioAtualizado // Descomente se quiser retornar o usuário completo
+        });
+    } catch (error) {
+        console.error(`Erro na rota PATCH /user/:telefone/mark-first-message:`, error);
+        if (error.message.includes("Usuário não encontrado")) {
+            // Se o usuário não foi encontrado pelo serviço
+            return res.status(404).json({ error: error.message });
+        }
+        // Outros erros (ex: falha no banco de dados)
+        res.status(500).json({ error: "Erro interno ao atualizar status da primeira mensagem." });
+    }
+});
+
 
 module.exports = router;

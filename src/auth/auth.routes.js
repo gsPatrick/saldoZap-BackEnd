@@ -145,7 +145,7 @@ router.patch('/mark-first-message/:telefone', async (req, res) => {
     }
 });
 
-router.post('/send-bulk-message', authenticateApiKey, async (req, res) => {
+router.post('/send-bulk-message',  async (req, res) => {
     const { userIds, message } = req.body; // Espera um array de IDs e a mensagem
 
     console.log('[Rota POST /send-bulk-message] Requisição recebida. IDs:', userIds?.length, 'Mensagem:', message ? 'Sim' : 'Não');

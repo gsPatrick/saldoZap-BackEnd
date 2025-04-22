@@ -416,7 +416,7 @@
                 // Monta os headers
                 const headers = {
                     'Content-Type': 'application/json',
-                    'Client-Token': ZAPI_CLIENT_TOKEN,
+                    'Client-Token': 'Fb60f69a4625b40b9a67f7083974da62cS',
                 };
     
                 // Faz a chamada POST para a Z-API usando Axios

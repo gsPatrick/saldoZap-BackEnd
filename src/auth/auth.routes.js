@@ -145,5 +145,39 @@ router.patch('/mark-first-message/:telefone', async (req, res) => {
     }
 });
 
+router.post('/send-bulk-message', authenticateApiKey, async (req, res) => {
+    const { userIds, message } = req.body; // Espera um array de IDs e a mensagem
+
+    console.log('[Rota POST /send-bulk-message] Requisição recebida. IDs:', userIds?.length, 'Mensagem:', message ? 'Sim' : 'Não');
+
+    // Validação básica da entrada
+    if (!Array.isArray(userIds) || userIds.length === 0 || !message || typeof message !== 'string' || message.trim() === '') {
+        console.warn('[Rota POST /send-bulk-message] Requisição inválida. Dados:', req.body);
+        return res.status(400).json({ error: "É necessário fornecer um array 'userIds' não vazio e uma 'message' válida." });
+    }
+
+    try {
+        // Chama o serviço para enviar as mensagens
+        const result = await authService.sendBulkWhatsAppMessage(userIds, message);
+
+        console.log('[Rota POST /send-bulk-message] Resultado do envio:', result);
+
+        // Responde com o resumo do envio
+        res.status(200).json({
+            message: `Processo de envio concluído. ${result.successCount} enviada(s) com sucesso, ${result.failedCount} falha(s).`,
+            details: {
+                successCount: result.successCount,
+                failedCount: result.failedCount,
+                errors: result.errors // Lista detalhada de erros (opcional, pode ser grande)
+            }
+        });
+
+    } catch (error) {
+        console.error('[Rota POST /send-bulk-message] Erro no serviço:', error);
+        // Retorna erro genérico ou a mensagem do serviço se disponível
+        res.status(500).json({ error: error.message || "Erro interno ao processar o envio em massa." });
+    }
+});
+
 
 module.exports = router;

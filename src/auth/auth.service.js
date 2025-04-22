@@ -1,6 +1,8 @@
     // src/auth/auth.service.js
     const Usuario = require('../usuarios/usuario.model');
     const { Op, fn, col, literal } = require('sequelize'); // <<< NECESSÁRIO para a função
+    const axios = require('axios'); // <-- ADD THIS LINE
+
 
     const registerWebsiteUser = async (telefone, email) => {
         try {

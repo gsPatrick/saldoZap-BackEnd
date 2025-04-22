@@ -420,7 +420,7 @@
                 };
     
                 // Faz a chamada POST para a Z-API usando Axios
-                const response = await axios.post(ZAPI_SEND_URL, body, { headers });
+                const response = await axios.post('https://api.z-api.io/instances/3DF5DE88F3E4A06538B632C54B267657/token/33C4D90A5B63208868D1CAAC/send-text', body, { headers });
     
                 // Verifica a resposta da Z-API (ajuste conforme a resposta real da Z-API)
                 if (response.status === 200 || response.status === 201) {

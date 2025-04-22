@@ -2,6 +2,8 @@
     const Usuario = require('../usuarios/usuario.model');
     const { Op, fn, col, literal } = require('sequelize'); // <<< NECESSÁRIO para a função
     const axios = require('axios'); // <-- ADD THIS LINE
+    const bcrypt = require('bcrypt');
+const jwt = require('jsonwebtoken');
     require('dotenv').config(); // Load .env variables
 
 

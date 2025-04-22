@@ -2,6 +2,7 @@
 const express = require('express');
 const authService = require('./auth.service');
 const authenticateApiKey = require('../middleware/authenticateApiKey'); // <<< 1. IMPORTAR (se já não estiver)
+const Usuario = require('../usuarios/usuario.model'); // Adjust path
 
 const router = express.Router();
 

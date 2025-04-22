@@ -52,6 +52,10 @@ const Usuario = sequelize.define('Usuario', {
     allowNull: false,       // Não pode ser nulo
     defaultValue: true,     // Começa como true (primeira mensagem pendente)
     field: 'primeira_mensagem' // Nome da coluna no banco de dados
+  },
+  senha: {
+    type: DataTypes.STRING, // Will store the HASHED password
+    allowNull: true        // Password is NOT mandatory
   }
   // --- FIM NOVO CAMPO ---
 }, {

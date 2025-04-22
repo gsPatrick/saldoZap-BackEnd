@@ -179,5 +179,63 @@ router.post('/send-bulk-message',  async (req, res) => {
     }
 });
 
+router.post('/register', async (req, res) => {
+    try {
+      // Add more robust validation here if needed (e.g., using Joi or express-validator)
+      const { nome, telefone, email, senha } = req.body;
+  
+      if (!telefone) { // Basic check, service layer does more thorough check
+        return res.status(400).json({ error: 'Telefone é obrigatório.' });
+      }
+       // You might want to add password complexity rules here
+  
+      const newUser = await authService.registerUser({ nome, telefone, email, senha });
+      console.log(`[Rota POST /register] Usuário ${newUser.id_usuario} registrado com sucesso.`);
+      res.status(201).json({ message: 'Usuário registrado com sucesso!', user: newUser }); // Return user data (without pass)
+  
+    } catch (error) {
+      console.error("[Rota POST /register] Erro:", error.message);
+      // Send specific status codes based on error type
+      if (error.message.includes('já cadastrado')) {
+        return res.status(409).json({ error: error.message }); // 409 Conflict
+      }
+      if (error.message.includes('obrigatório')) {
+         return res.status(400).json({ error: error.message }); // 400 Bad Request
+      }
+      res.status(500).json({ error: 'Falha ao registrar usuário.' });
+    }
+  });
+  
+  // --- Login Route ---
+  router.post('/login', async (req, res) => {
+    try {
+      const { identifier, senha } = req.body; // identifier can be email or phone
+  
+      if (!identifier || !senha) {
+        return res.status(400).json({ error: 'Email/Telefone e Senha são obrigatórios.' });
+      }
+  
+      const result = await authService.loginUser(identifier, senha);
+      console.log(`[Rota POST /login] Usuário ${result.user.id_usuario} logado com sucesso.`);
+      // Return user info and the token
+      res.status(200).json({
+          message: 'Login bem-sucedido!',
+          user: result.user, // User data (without password hash)
+          token: result.token // The JWT
+      });
+  
+    } catch (error) {
+      console.error("[Rota POST /login] Erro:", error.message);
+       if (error.message.includes('não encontrado') || error.message.includes('inválidas') || error.message.includes('não habilitado')) {
+         return res.status(401).json({ error: 'Credenciais inválidas.' }); // 401 Unauthorized
+       }
+       if (error.message.includes('obrigatórios')) {
+          return res.status(400).json({ error: error.message }); // 400 Bad Request
+       }
+      res.status(500).json({ error: 'Falha ao fazer login.' });
+    }
+  });
+  
+
 
 module.exports = router;

@@ -2,7 +2,137 @@
     const Usuario = require('../usuarios/usuario.model');
     const { Op, fn, col, literal } = require('sequelize'); // <<< NECESSÁRIO para a função
     const axios = require('axios'); // <-- ADD THIS LINE
+    require('dotenv').config(); // Load .env variables
 
+
+    const JWT_SECRET = process.env.JWT_SECRET;
+const JWT_EXPIRES_IN = process.env.JWT_EXPIRES_IN || '1d'; // Default expiration
+
+if (!JWT_SECRET) {
+    console.error("FATAL ERROR: JWT_SECRET is not defined in .env file.");
+    process.exit(1); // Exit if secret is missing
+  }
+  
+  // --- Helper Functions ---
+  const hashPassword = async (password) => {
+    if (!password) return null; // Don't hash if no password provided
+    const salt = await bcrypt.genSalt(10);
+    return await bcrypt.hash(password, salt);
+  };
+  
+  const comparePassword = async (plainPassword, hashedPassword) => {
+    if (!plainPassword || !hashedPassword) return false; // Cannot compare if one is missing
+    return await bcrypt.compare(plainPassword, hashedPassword);
+  };
+  
+  const generateToken = (user) => {
+    const payload = {
+      id: user.id_usuario,
+      email: user.email,
+      // Add any other non-sensitive info you might need in the token
+    };
+    return jwt.sign(payload, JWT_SECRET, { expiresIn: JWT_EXPIRES_IN });
+  };
+  
+  // --- Registration Service ---
+  const registerUser = async (userData) => {
+    const { nome, telefone, email, senha } = userData;
+  
+    // Basic validation
+    if (!telefone) { // Assuming phone is mandatory
+      throw new Error('Telefone é obrigatório.');
+    }
+  
+    // Check for existing user (by phone OR email if email is provided and unique)
+    const existingUser = await Usuario.findOne({
+      where: {
+        [Op.or]: [
+          { telefone: telefone },
+          // Only check email if it's provided
+          ...(email ? [{ email: email }] : [])
+        ]
+      }
+    });
+  
+    if (existingUser) {
+      if (existingUser.telefone === telefone) {
+          throw new Error('Telefone já cadastrado.');
+      }
+      if (email && existingUser.email === email) {
+          throw new Error('Email já cadastrado.');
+      }
+      // Fallback (shouldn't normally happen with OR logic but good practice)
+      throw new Error('Usuário já cadastrado.');
+    }
+  
+    // Hash the password IF it was provided
+    const hashedPassword = await hashPassword(senha);
+  
+    // Create the user
+    try {
+      const newUser = await Usuario.create({
+        nome,
+        telefone,
+        email: email || null, // Store null if email not provided
+        senha: hashedPassword, // Store hashed password or null
+        // Set default trial period, plan, etc. if needed
+        // trial_fim: ...
+        // plano: 'Free'
+      });
+  
+      // Don't return the password hash
+      const userResponse = newUser.toJSON();
+      delete userResponse.senha;
+  
+      return userResponse;
+    } catch (error) {
+      console.error("Erro ao criar usuário no banco:", error);
+      // Check for specific Sequelize validation errors if necessary
+      throw new Error('Erro ao registrar usuário. Tente novamente.');
+    }
+  };
+
+  const loginUser = async (identifier, password) => {
+    // Identifier can be email or phone
+    if (!identifier || !password) {
+      throw new Error('Email/Telefone e Senha são obrigatórios.');
+    }
+  
+    // Find user by email or phone
+    const user = await Usuario.findOne({
+      where: {
+        [Op.or]: [
+          { email: identifier },
+          { telefone: identifier }
+        ]
+      }
+    });
+  
+    if (!user) {
+      throw new Error('Usuário não encontrado.');
+    }
+  
+    // IMPORTANT: Check if the user actually has a password set
+    if (!user.senha) {
+      throw new Error('Login por senha não habilitado para este usuário.'); // Or a more generic "Invalid credentials"
+    }
+  
+    // Compare provided password with the stored hash
+    const isMatch = await comparePassword(password, user.senha);
+  
+    if (!isMatch) {
+      throw new Error('Credenciais inválidas.'); // Generic error for security
+    }
+  
+    // Generate JWT
+    const token = generateToken(user);
+  
+    // Prepare user data to return (exclude password)
+    const userResponse = user.toJSON();
+    delete userResponse.senha;
+  
+    return { user: userResponse, token };
+  };
 
     const registerWebsiteUser = async (telefone, email) => {
         try {
@@ -462,5 +592,7 @@
         registerOrUpdateSubscription,
         getDashboardStats,
         markFirstMessageSent,
-        sendBulkWhatsAppMessage 
+        sendBulkWhatsAppMessage,
+        registerUser,
+        loginUser,
     };

@@ -181,51 +181,45 @@ const createTransaction = async (dadosTransacao, options = {}) => {
         throw error; // Re-lança para a camada superior
     }
 };
-
 const listTransactions = async (id_usuario, filtroPeriodo = null, tipoFiltro = null, additionalFilters = {}) => {
     const userIdNum = parseInt(id_usuario, 10);
     if(isNaN(userIdNum)) {
+         console.error("[listTransactions] ID de usuário inválido:", id_usuario);
          throw new Error("ID de usuário inválido fornecido para listTransactions.");
     }
 
-    // Começa com o id_usuario obrigatório. Os outros filtros serão adicionados.
-    const whereClause = { id_usuario: userIdNum };
-    console.log("[listTransactions] Filtros iniciais (apenas id_usuario):", JSON.stringify(whereClause));
+    // Start with an array of conditions for the WHERE clause.
+    // Sequelize will implicitly AND these conditions at the top level.
+    const conditions = [];
+    conditions.push({ id_usuario: userIdNum }); // User ID is always required
+    console.log("[listTransactions] Condições iniciais (apenas id_usuario):", JSON.stringify(conditions));
 
-    // Processa additionalFilters (que pode conter nome_categoria)
+
+    // Processa additionalFilters (que pode conter nome_categoria_filtro)
     if(additionalFilters) {
         console.log("[listTransactions] Processando additionalFilters:", JSON.stringify(additionalFilters));
         for (const key in additionalFilters) {
              if (Object.hasOwnProperty.call(additionalFilters, key)) {
                  const value = additionalFilters[key];
-                 // Adiciona à whereClause apenas se o valor não for nulo/vazio/undefined
+                 // Add condition only if value is not null/empty/undefined
                  if (value !== undefined && value !== null && value !== '') {
 
-                    // <<< INÍCIO DA LÓGICA DE BUSCA FLEXÍVEL POR CATEGORIA/DESCRIÇÃO >>>
-                    // A chave esperada vinda da rota é 'nome_categoria_filtro'
-                    // Mas o service usa 'nome_categoria' na sua lógica interna e nos logs.
-                    // Vamos manter a consistência interna do service usando 'nome_categoria' para o log
-                    // e aplicar o filtro sobre nome_categoria E descricao.
-                    if (key === 'nome_categoria_filtro') { // A chave vinda da rota/IA
-                        const searchTerm = `%${value}%`; // Prepara termo para busca com LIKE/ILIKE (contém)
-
-                        // Adiciona uma condição OR para buscar o termo em nome_categoria OU descricao
-                        // Verifica se já existe um Op.or para não sobrescrever outras condições OR (raro, mas seguro)
-                        if (!whereClause[Op.or]) {
-                            whereClause[Op.or] = [];
-                        }
-                        // Adiciona as condições OR específicas para categoria/descrição
-                        whereClause[Op.or].push(
-                             { nome_categoria: { [Op.iLike]: searchTerm } }, // Busca na coluna nome_categoria
-                             { descricao: { [Op.iLike]: searchTerm } }      // Busca na coluna descricao
-                        );
-                         console.log(`[listTransactions] Adicionado filtro ILIKE com OR para nome_categoria/descricao com termo: "${value}"`);
+                    // Handle nome_categoria_filtro (search in nome_categoria OR descricao)
+                    // This key should come from the IA/N8N
+                    if (key === 'nome_categoria_filtro') {
+                        const searchTerm = `%${value}%`;
+                        // Create the OR condition object and add it to the main conditions array
+                        conditions.push({
+                            [Op.or]: [
+                                { nome_categoria: { [Op.iLike]: searchTerm } },
+                                { descricao: { [Op.iLike]: searchTerm } }
+                            ]
+                        });
+                         console.log(`[listTransactions] Adicionado objeto Op.or para nome_categoria/descricao com termo: "${value}"`);
                     }
-                    // <<< FIM DA LÓGICA DE BUSCA FLEXÍVEL >>>
-
-                    // Adicionar outros filtros de 'additionalFilters' se houver no futuro
+                    // Add other filters from additionalFilters if needed in the future
                     // else if (key === 'outro_filtro') {
-                    //    whereClause[key] = value; // Ou com Op específico se necessário
+                    //    conditions.push({ [key]: value }); // Or with specific Op if necessary
                     // }
                  }
              }
@@ -233,90 +227,101 @@ const listTransactions = async (id_usuario, filtroPeriodo = null, tipoFiltro = n
     }
 
     // Processa filtroPeriodo
+    // O filtroPeriodo pode vir como string normalizada ('mes_atual') ou como objeto {startDate, endDate}
     if (filtroPeriodo) {
         console.log("[listTransactions] Processando filtroPeriodo:", filtroPeriodo);
-        // Caso 1: Objeto {startDate, endDate} (normalmente vindo direto de parâmetros de rota ou outro processamento)
+        let dateCondition = null; // Objeto para a condição de data
+
+        // Caso 1: Objeto {startDate, endDate} (preferencial se disponível)
         if (typeof filtroPeriodo === 'object' && filtroPeriodo.startDate && filtroPeriodo.endDate) {
-            if (/\d{4}-\d{2}-\d{2}/.test(filtroPeriodo.startDate) && /\d{4}-\d{2}-\d{2}/.test(filtroPeriodo.endDate)) {
-                // Assume que as datas já estão no formato YYYY-MM-DD e são datas de início/fim de um range
+            // Validar formato das datas no objeto
+            if (/^\d{4}-\d{2}-\d{2}$/.test(filtroPeriodo.startDate) && /^\d{4}-\d{2}-\d{2}$/.test(filtroPeriodo.endDate)) {
                 const startDate = filtroPeriodo.startDate;
                 const endDate = filtroPeriodo.endDate;
-                whereClause.data_transacao = { [Op.between]: [startDate, endDate] };
+                dateCondition = { data_transacao: { [Op.between]: [startDate, endDate] } };
                 console.log("[listTransactions] Filtro de data (between objeto {startDate, endDate}) aplicado:", startDate, "até", endDate);
-             } else {console.warn(`[listTransactions] Formato de data inválido no objeto periodo: ${JSON.stringify(filtroPeriodo)}`);}
+             } else {console.warn(`[listTransactions] Formato de data inválido no objeto periodo: ${JSON.stringify(filtroPeriodo)}. Filtro de data ignorado.`);}
         }
-        // Caso 2: String normalizada (normalmente vindo da IA/N8N como termo relativo ou data YYYY-MM-DD)
+        // Caso 2: String normalizada (termo relativo ou data YYYY-MM-DD)
         else if (typeof filtroPeriodo === 'string') {
-            // Usa a função helper para calcular a data base a partir da string
-            const startDateCalculada = calcularStartDate(filtroPeriodo); // Assume que retorna Date ou null
+             // Tenta calcular a data de início usando a helper function
+             const startDateCalculada = calcularStartDate(filtroPeriodo); // Assume que retorna Date ou null
 
-            if (startDateCalculada instanceof Date && !isNaN(startDateCalculada)) {
-                 // Formata a data calculada para string YYYY-MM-DD para consistência e uso no Sequelize DATEONLY
-                 const startDateStr = startDateCalculada.toISOString().split('T')[0];
-                 let endDateStr = null; // Variável para a data final do range, se aplicável
+             if (startDateCalculada instanceof Date && !isNaN(startDateCalculada)) {
+                  // Formata a data calculada para string YYYY-MM-DD para consistência com DATEONLY
+                  const startDateStr = startDateCalculada.toISOString().split('T')[0];
+                  let endDateStr = null; // Variável para a data final do range, se aplicável
 
-                 // --- Lógica para definir o intervalo de data baseado na string ---
+                  // --- Lógica para definir o intervalo de data baseado na string ---
 
-                 // >>> NOVO/AJUSTADO: Trata String YYYY-MM-DD como um dia específico <<<
-                 if (/^\d{4}-\d{2}-\d{2}$/.test(filtroPeriodo)) {
-                      // Se a entrada original foi uma data YYYY-MM-DD, o range é esse dia
-                      endDateStr = startDateStr; // O final do range é o mesmo dia
-                      whereClause.data_transacao = { [Op.between]: [startDateStr, endDateStr] };
-                      console.log(`[listTransactions] Filtro de data (data específica YYYY-MM-DD) aplicado: ${startDateStr}`);
-                 }
-                 // >>> Trata termos relativos específicos que representam um range <<<
-                 else if (['hoje', 'ontem'].includes(filtroPeriodo.toLowerCase())) {
-                      // Para 'hoje' ou 'ontem', o intervalo é de um dia
-                      endDateStr = startDateStr; // O final do range é o mesmo dia
-                      whereClause.data_transacao = { [Op.eq]: startDateStr }; // Usa Op.eq para um único dia (mais direto)
-                      console.log(`[listTransactions] Filtro de data (eq string ${filtroPeriodo}) aplicado: ${startDateStr}`);
-                 } else if (filtroPeriodo.toLowerCase() === 'semana_passada' || filtroPeriodo.toLowerCase() === 'semana_atual') {
-                      const diaSemana = startDateCalculada.getDay(); // 0 = Domingo, 1 = Segunda...
-                      // Calcula o fim da semana (próximo domingo ou o próprio domingo se for domingo)
-                      const diffParaDomingo = 6 - diaSemana + (diaSemana === 0 ? 0 : 1);
-                      const endDateCalculada = new Date(startDateCalculada);
-                      endDateCalculada.setDate(startDateCalculada.getDate() + diffParaDomingo);
-                      endDateStr = endDateCalculada.toISOString().split('T')[0];
-                      whereClause.data_transacao = { [Op.between]: [startDateStr, endDateStr] };
-                      console.log(`[listTransactions] Filtro de data (between string ${filtroPeriodo}) aplicado: ${startDateStr} até ${endDateStr}`);
-                 } else if (['mes_passado', 'mes_atual', 'mes_proximo'].includes(filtroPeriodo.toLowerCase())) {
-                      // Para meses, o range é do primeiro ao último dia
-                      const ultimoDiaMes = new Date(startDateCalculada.getFullYear(), startDateCalculada.getMonth() + 1, 0);
-                      endDateStr = ultimoDiaMes.toISOString().split('T')[0];
-                      whereClause.data_transacao = { [Op.between]: [startDateStr, endDateStr] };
-                      console.log(`[listTransactions] Filtro de data (between string ${filtroPeriodo}) aplicado: ${startDateStr} até ${endDateStr}`);
-                 } else if (['ano_passado', 'ano_atual'].includes(filtroPeriodo.toLowerCase())) {
-                      // Para anos, o range é do primeiro ao último dia
-                      const ultimoDiaAno = new Date(startDateCalculada.getFullYear(), 11, 31);
-                      endDateStr = ultimoDiaAno.toISOString().split('T')[0];
-                      whereClause.data_transacao = { [Op.between]: [startDateStr, endDateStr] };
+                  // Se a string original for YYYY-MM-DD, é um filtro para um dia específico
+                  if (/^\d{4}-\d{2}-\d{2}$/.test(filtroPeriodo)) {
+                       endDateStr = startDateStr; // O final do range é o mesmo dia
+                       dateCondition = { data_transacao: { [Op.between]: [startDateStr, endDateStr] } };
+                       console.log(`[listTransactions] Filtro de data (data específica YYYY-MM-DD) aplicado: ${startDateStr}`);
+                  }
+                  // Trata termos relativos que representam um range fixo
+                  else if (['hoje', 'ontem'].includes(filtroPeriodo.toLowerCase())) {
+                       endDateStr = startDateStr; // O final do range é o mesmo dia
+                       dateCondition = { data_transacao: { [Op.eq]: startDateStr } }; // Usa Op.eq para um único dia
+                       console.log(`[listTransactions] Filtro de data (eq string ${filtroPeriodo}) aplicado: ${startDateStr}`);
+                  } else if (filtroPeriodo.toLowerCase() === 'semana_passada' || filtroPeriodo.toLowerCase() === 'semana_atual') {
+                       const diaSemana = startDateCalculada.getDay(); // 0 = Domingo, 1 = Segunda...
+                       // Calcula o fim da semana (próximo domingo ou o próprio domingo se for domingo)
+                       const diffParaDomingo = 6 - diaSemana + (diaSemana === 0 ? 0 : 1);
+                       const endDateCalculada = new Date(startDateCalculada);
+                       endDateCalculada.setDate(startDateCalculada.getDate() + diffParaDomingo);
+                       endDateStr = endDateCalculada.toISOString().split('T')[0];
+                       dateCondition = { data_transacao: { [Op.between]: [startDateStr, endDateStr] } };
                        console.log(`[listTransactions] Filtro de data (between string ${filtroPeriodo}) aplicado: ${startDateStr} até ${endDateStr}`);
-                 }
-                 // >>> Fallback: Trata outras strings (como 'ultimos 7 dias' onde calcularStartDate retorna a data inicial) como "a partir de" <<<
-                 else {
-                     // Se a string não se encaixou em nenhum range específico (data única, semana, mês, ano),
-                     // aplica um filtro de "maior ou igual que" a data calculada.
-                     // (Se precisar de "últimos X dias" exatos, calcular endDate aqui seria necessário)
-                     whereClause.data_transacao = { [Op.gte]: startDateStr };
-                     console.log(`[listTransactions] Filtro de data (gte string ${filtroPeriodo}) aplicado: a partir de ${startDateStr}`);
-                 }
+                  } else if (['mes_passado', 'mes_atual', 'mes_proximo'].includes(filtroPeriodo.toLowerCase())) {
+                       // Para meses, o range é do primeiro ao último dia
+                       const ultimoDiaMes = new Date(startDateCalculada.getFullYear(), startDateCalculada.getMonth() + 1, 0);
+                       endDateStr = ultimoDiaMes.toISOString().split('T')[0];
+                       dateCondition = { data_transacao: { [Op.between]: [startDateStr, endDateStr] } };
+                       console.log(`[listTransactions] Filtro de data (between string ${filtroPeriodo}) aplicado: ${startDateStr} até ${endDateStr}`);
+                  } else if (['ano_passado', 'ano_atual'].includes(filtroPeriodo.toLowerCase())) {
+                       // Para anos, o range é do primeiro ao último dia
+                       const ultimoDiaAno = new Date(startDateCalculada.getFullYear(), 11, 31);
+                       endDateStr = ultimoDiaAno.toISOString().split('T')[0];
+                       dateCondition = { data_transacao: { [Op.between]: [startDateStr, endDateStr] } };
+                        console.log(`[listTransactions] Filtro de data (between string ${filtroPeriodo}) aplicado: ${startDateStr} até ${endDateStr}`);
+                  }
+                  // Fallback: Trata outras strings (como 'ultimos 7 dias' - se não mapeado acima - onde calcularStartDate retorna a data inicial) como "a partir de"
+                  // Se você tiver termos como "últimos 7 dias", pode adicionar um case específico ou calcular endDate aqui.
+                  else {
+                      // Aplica um filtro de "maior ou igual que" a data calculada.
+                      dateCondition = { data_transacao: { [Op.gte]: startDateStr } };
+                      console.log(`[listTransactions] Filtro de data (gte string ${filtroPeriodo}) aplicado: a partir de ${startDateStr}`);
+                  }
 
-                 // --- Fim da Lógica de Intervalo ---
+                  // --- Fim da Lógica de Intervalo ---
 
-            } else { console.warn(`[listTransactions] Não foi possível calcular data válida para o período string: "${filtroPeriodo}"`); }
-        } else { console.warn(`[listTransactions] Tipo de filtroPeriodo inesperado: ${typeof filtroPeriodo}`); }
+             } else { console.warn(`[listTransactions] Não foi possível calcular data válida para o período string: "${filtroPeriodo}". Filtro de data ignorado.`); }
+        } else { console.warn(`[listTransactions] Tipo de filtroPeriodo inesperado: ${typeof filtroPeriodo}. Filtro de data ignorado.`); }
+
+        // Add the date condition object to the main conditions array if it was created
+        if (dateCondition) {
+            conditions.push(dateCondition);
+        }
     } else { console.log("[listTransactions] Nenhum filtro de período fornecido."); }
 
-    // Adiciona filtro de tipo (receita ou despesa)
+    // Add tipo filter (receita or despesa)
+    // Este filtro deve vir da IA/N8N como 'receita' ou 'despesa'
     if (tipoFiltro && ['receita', 'despesa'].includes(tipoFiltro.toLowerCase())) {
-        whereClause.tipo = tipoFiltro.toLowerCase();
-        console.log(`[listTransactions] Filtro de tipo aplicado: ${whereClause.tipo}`);
+        conditions.push({ tipo: tipoFiltro.toLowerCase() });
+        console.log(`[listTransactions] Filtro de tipo aplicado: ${tipoFiltro.toLowerCase()}`);
     } else if (tipoFiltro){ // Log se tipo for inválido (não é 'receita' nem 'despesa')
         console.warn(`[listTransactions] Filtro de tipo inválido ('${tipoFiltro}') ignorado.`);
     } else {
          console.log(`[listTransactions] Nenhum filtro de tipo aplicado.`);
     }
 
+    // Combine all collected conditions using Op.and at the top level of the where clause.
+    // If the 'conditions' array has only one element (just id_usuario), using Op.and is not
+    // strictly necessary but is harmless and keeps the structure consistent.
+    // If the array is empty (shouldn't happen with id_usuario), use an empty object.
+    const finalWhereClause = conditions.length > 0 ? { [Op.and]: conditions } : {};
 
     // Log final da cláusula WHERE
     // Usa um replacer para Op para que eles apareçam como string no log
@@ -329,16 +334,18 @@ const listTransactions = async (id_usuario, filtroPeriodo = null, tipoFiltro = n
                 case Op.gte: return 'Op.gte';
                 case Op.iLike: return 'Op.iLike';
                 case Op.or: return 'Op.or';
+                case Op.and: return 'Op.and'; // Adiciona Op.and
                 default: return value.toString(); // Qualquer outro símbolo
             }
         }
         return value; // Retorna o valor original para não-símbolos
     };
-    console.log("[listTransactions] Where clause final para findAll:", JSON.stringify(whereClause, replacer, 2));
+    console.log("[listTransactions] Where clause final para findAll:", JSON.stringify(finalWhereClause, replacer, 2));
 
     try {
+        // Execute a consulta com a cláusula WHERE combinada
         const transacoes = await Transacao.findAll({
-            where: whereClause,
+            where: finalWhereClause, // Use a cláusula where combinada
             // Ordena por data decrescente e depois por ID decrescente
             order: [['data_transacao', 'DESC'], ['id_transacao', 'DESC']]
         });
@@ -349,11 +356,10 @@ const listTransactions = async (id_usuario, filtroPeriodo = null, tipoFiltro = n
         console.error("[listTransactions] Erro Sequelize durante a consulta:", error);
         // Tenta extrair o SQL se disponível para debug
         if (error.parent?.sql) { console.error("[listTransactions] SQL Gerado (aproximado):", error.parent.sql); }
-        else if (error.sql) { console.error("[listTransactions] SQL Gerado:", error.sql); }
+        else if (error.sql) { console.error("SQL Gerado:", error.sql); }
         throw error; // Re-lança o erro para a camada superior (rota)
     }
 };
-
 
 
 const getTransactionById = async (id_transacao) => {

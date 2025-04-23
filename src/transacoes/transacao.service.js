@@ -206,7 +206,7 @@ const listTransactions = async (id_usuario, filtroPeriodo = null, tipoFiltro = n
 
                     // Handle nome_categoria_filtro (search in nome_categoria OR descricao)
                     // This key should come from the IA/N8N
-                    if (key === 'nome_categoria_filtro') {
+                    if (key === 'nome_categoria') {
                         const searchTerm = `%${value}%`;
                         // Create the OR condition object and add it to the main conditions array
                         conditions.push({

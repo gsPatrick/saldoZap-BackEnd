@@ -111,6 +111,12 @@ const createTransaction = async (dadosTransacao, options = {}) => {
     }
 
     try {
+        // --- PASSO 1: Obter o saldo ANTES da transação ---
+        console.log("[createTransaction] Obtendo saldo antes da transação...");
+        // Passa as options (incluindo transaction se estiver no contexto)
+        const saldoAntesDaTransacao = await getCurrentBalance(dadosTransacao.id_usuario, options);
+        console.log(`[createTransaction] Saldo ANTES: ${saldoAntesDaTransacao}`);
+
         // LOG 2: Antes de gerar código único
         console.log("[createTransaction] Gerando código único...");
         const codigo_unico_gerado = await generateUniqueTransactionCode();
@@ -133,7 +139,7 @@ const createTransaction = async (dadosTransacao, options = {}) => {
             // Mantém strings como estão (ou null se ausentes)
             tipo: dadosTransacao.tipo,
             nome_categoria: dadosTransacao.nome_categoria || null,
-            data_transacao: dadosTransacao.data_transacao, // Assume que já está YYYY-MM-DD
+            data_transacao: dadosTransacao.data_transacao, // Assume que já está YYYY-MM-DD ou Date
             data_ocorrencia_recorrencia: dadosTransacao.data_ocorrencia_recorrencia || null,
             descricao: dadosTransacao.descricao || null,
             comprovante_url: dadosTransacao.comprovante_url || null,
@@ -145,11 +151,9 @@ const createTransaction = async (dadosTransacao, options = {}) => {
         // Validação extra de tipos (opcional)
         if (isNaN(dadosParaCriar.id_usuario)) throw new Error("ID de usuário inválido fornecido para createTransaction.");
         if (isNaN(dadosParaCriar.valor)) throw new Error("Valor inválido fornecido para createTransaction.");
-        // Adicione outras validações de tipo se necessário
+        if (!['receita', 'despesa'].includes(dadosParaCriar.tipo)) throw new Error("Tipo de transação inválido fornecido (deve ser 'receita' ou 'despesa').");
+         // Adicione outras validações de tipo/formato se necessário (ex: data_transacao)
 
-        // Remove chaves com valor explicitamente null se o banco não gostar ou para limpeza
-        // (Sequelize geralmente lida bem com null, então isso pode não ser necessário)
-        // Object.keys(dadosParaCriar).forEach(key => (dadosParaCriar[key] === null) && delete dadosParaCriar[key]);
 
         // LOG 4: Antes de chamar Transacao.create
         console.log("[createTransaction] Chamando Transacao.create com (tipos ajustados):", JSON.stringify(dadosParaCriar, null, 2));
@@ -165,7 +169,19 @@ const createTransaction = async (dadosTransacao, options = {}) => {
             throw new Error("Falha ao obter o objeto da transação após a criação.");
         }
 
-        return novaTransacao; // Retorna o objeto criado
+        // --- PASSO 2: Obter o saldo DEPOIS da transação ---
+        console.log("[createTransaction] Obtendo saldo após a transação...");
+         // Passa as options (incluindo transaction se estiver no contexto)
+        const saldoAposTransacao = await getCurrentBalance(dadosParaCriar.id_usuario, options);
+        console.log(`[createTransaction] Saldo DEPOIS: ${saldoAposTransacao}`);
+
+        // --- PASSO 3: Retornar a transação criada E os saldos ---
+        // Use .get({ plain: true }) para obter um objeto JavaScript simples
+        return {
+            ...novaTransacao.get({ plain: true }), // Inclui todos os campos da nova transação
+            saldoAntesDaTransacao: saldoAntesDaTransacao,
+            saldoAposTransacao: saldoAposTransacao
+        };
 
     } catch (error) {
         // LOG 6: Se ocorrer um erro em qualquer ponto do try
@@ -181,6 +197,8 @@ const createTransaction = async (dadosTransacao, options = {}) => {
         throw error; // Re-lança para a camada superior
     }
 };
+
+
 const listTransactions = async (id_usuario, filtroPeriodo = null, tipoFiltro = null, additionalFilters = {}) => {
     const userIdNum = parseInt(id_usuario, 10);
     if(isNaN(userIdNum)) {
@@ -466,24 +484,36 @@ const deleteTransactionByCode = async (codigo_unico, id_usuario) => {
     }
 };
 
-const getCurrentBalance = async (id_usuario) => {
+const getCurrentBalance = async (id_usuario, options = {}) => {
     const userIdNum = parseInt(id_usuario, 10);
      if(isNaN(userIdNum)) {
+         console.error("[getCurrentBalance] ID de usuário inválido:", id_usuario);
+         // Lançar erro ou retornar um valor indicando erro
          throw new Error("ID de usuário inválido fornecido para getCurrentBalance.");
      }
     try {
-        const receitas = await Transacao.sum('valor', { where: { id_usuario: userIdNum, tipo: 'receita' } });
-        const despesas = await Transacao.sum('valor', { where: { id_usuario: userIdNum, tipo: 'despesa' } });
+        // Passa as options para as operações de SUM
+        const receitas = await Transacao.sum('valor', {
+            where: { id_usuario: userIdNum, tipo: 'receita' },
+            ...options // Espalha as opções (incluindo 'transaction' se existir)
+        });
+        const despesas = await Transacao.sum('valor', {
+            where: { id_usuario: userIdNum, tipo: 'despesa' },
+            ...options // Espalha as opções (incluindo 'transaction' se existir)
+        });
 
         const totalReceitas = receitas || 0;
         const totalDespesas = despesas || 0;
 
-        const balance = parseFloat(totalReceitas) - parseFloat(totalDespesas);
-        return parseFloat(balance.toFixed(2));
+        let balance = parseFloat(totalReceitas) - parseFloat(totalDespesas);
 
+        // Garante que o saldo não seja negativo
+        balance = Math.max(0, balance); // Retorna o maior entre 0 e o saldo calculado
+
+        return parseFloat(balance.toFixed(2)); // Formata para 2 casas decimais
     } catch (error) {
-        console.error(`Erro ao obter saldo atual para usuário ${id_usuario}:`, error);
-        throw error;
+        console.error(`[getCurrentBalance] Erro ao obter saldo atual para usuário ${id_usuario}:`, error);
+        throw error; // Re-lança para a camada superior
     }
 };
 

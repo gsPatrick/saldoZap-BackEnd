@@ -34,6 +34,10 @@ const Transacao = sequelize.define('Transacao', {
         type: DataTypes.STRING,
         allowNull: true
     },
+    nome_subcategoria: {
+        type: DataTypes.STRING(255),
+        allowNull: true // Subcategoria é opcional
+      },
     data_transacao: {
         type: DataTypes.DATEONLY,
         allowNull: false,

@@ -32,7 +32,7 @@ const syncDatabase = async () => {
         // >>>>> PONTO CRÍTICO: `force: true` apaga tudo! <<<<<
         // Mude para `force: false` ou remova a opção `force` para produção segura
         // ou use `alter: true` para tentar aplicar alterações (também arriscado sem migrações).
-        await sequelize.sync({ force: true });
+        await sequelize.sync({ force: false });
         // >>>>> --------------------------------------- <<<<<
 
         console.log('Banco de dados sincronizado com sucesso. (Tabelas recriadas!)');

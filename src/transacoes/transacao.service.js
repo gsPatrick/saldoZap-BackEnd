@@ -286,48 +286,9 @@ const listTransactions = async (id_usuario, filtroPeriodo = null, tipoFiltro = n
          throw new Error("ID de usuário inválido fornecido para listTransactions.");
     }
 
-    // Start with an array of conditions for the WHERE clause.
-    // Sequelize will implicitly AND these conditions at the top level.
-    const conditions = [];
-    conditions.push({ id_usuario: userIdNum }); // User ID is always required
-    console.log("[listTransactions] Condições iniciais (apenas id_usuario):", JSON.stringify(conditions));
-
-
-    // Processa additionalFilters (que pode conter nome_categoria para busca)
-    if(additionalFilters) {
-        console.log("[listTransactions] Processando additionalFilters:", JSON.stringify(additionalFilters));
-        for (const key in additionalFilters) {
-             if (Object.hasOwnProperty.call(additionalFilters, key)) {
-                 const value = additionalFilters[key];
-                 // Add condition only if value is not null/empty/undefined
-                 if (value !== undefined && value !== null && value !== '') {
-
-                    // --- ALTERAÇÃO AQUI: INCLUIR nome_subcategoria NA BUSCA ---
-                    // Handle category/subcategory/description filter (search in nome_categoria OR nome_subcategoria OR descricao)
-                    // This key should come from the API query parameter, likely still 'nome_categoria'
-                    // if the user provides a single search term that could be a category or subcategory.
-                    if (key === 'nome_categoria') { // Assumimos que o filtro geral chega via 'nome_categoria' na API
-                        const searchTerm = `%${value}%`;
-                        // Create the OR condition object searching across category, subcategory, AND description
-                        conditions.push({
-                            [Op.or]: [
-                                { nome_categoria: { [Op.iLike]: searchTerm } }, // Busca na categoria principal
-                                { nome_subcategoria: { [Op.iLike]: searchTerm } }, // Busca na subcategoria
-                                { descricao: { [Op.iLike]: searchTerm } } // Busca na descrição
-                            ]
-                        });
-                         console.log(`[listTransactions] Adicionado objeto Op.or para nome_categoria/nome_subcategoria/descricao com termo: "${value}"`);
-                    }
-                    // --- FIM ALTERAÇÃO ---
-
-                    // Add other filters from additionalFilters if needed in the future
-                    // else if (key === 'outro_filtro') {
-                    //    conditions.push({ [key]: value }); // Or with specific Op if necessary
-                    // }
-                 }
-             }
-        }
-    }
+    // Start with base conditions (user ID, date filter, type filter)
+    const conditions = [{ id_usuario: userIdNum }];
+    console.log("[listTransactions] Condições base (apenas id_usuario):", JSON.stringify(conditions));
 
     // Processa filtroPeriodo
     // O filtroPeriodo pode vir como string normalizada ('mes_atual') ou como objeto {startDate, endDate}
@@ -357,6 +318,8 @@ const listTransactions = async (id_usuario, filtroPeriodo = null, tipoFiltro = n
 
                   // Define a data final para ranges comuns (hoje, ontem, etc.) baseados na data calculada (local)
                   const endDateCalculada = new Date(startDateCalculada); // Começa igual à data de início
+                  const hoje = new Date(); // Precisa da data atual novamente para 'ultimos X dias'
+                  hoje.setHours(0,0,0,0); // Garante início do dia local
 
                   if (['hoje', 'ontem'].includes(filtroPeriodo.toLowerCase()) || /^\d{4}-\d{2}-\d{2}$/.test(filtroPeriodo.toLowerCase())) {
                        // Para um dia específico (hoje, ontem, ou data YYYY-MM-DD)
@@ -423,50 +386,94 @@ const listTransactions = async (id_usuario, filtroPeriodo = null, tipoFiltro = n
          console.log(`[listTransactions] Nenhum filtro de tipo aplicado.`);
     }
 
-    // Combine all collected conditions using Op.and at the top level of the where clause.
-    // If the 'conditions' array has only one element (just id_usuario), using Op.and is not
-    // strictly necessary but is harmless and keeps the structure consistent.
-    // If the array is empty (shouldn't happen with id_usuario), use an empty object.
-    const finalWhereClause = conditions.length > 0 ? { [Op.and]: conditions } : {};
+    // Define a ordenação padrão: data decrescente, depois ID decrescente
+    const standardOrder = [['data_transacao', 'DESC'], ['id_transacao', 'DESC']];
 
-    // Log final da cláusula WHERE
-    // Usa um replacer para Op para que eles apareçam como string no log
-    const replacer = (key, value) => {
-        if (typeof value === 'symbol') {
-            // Mapeia símbolos Sequelize Op para strings legíveis no log
-            switch(value) {
-                case Op.between: return 'Op.between';
-                case Op.eq: return 'Op.eq';
-                case Op.gte: return 'Op.gte';
-                case Op.iLike: return 'Op.iLike';
-                case Op.or: return 'Op.or';
-                case Op.and: return 'Op.and'; // Adiciona Op.and
-                default: return value.toString(); // Qualquer outro símbolo
-            }
-        }
-        return value; // Retorna o valor original para não-símbolos
-    };
-    console.log("[listTransactions] Where clause final para findAll:", JSON.stringify(finalWhereClause, replacer, 2));
+    // Processa o Termo de Busca Prioritária (vindo de additionalFilters.nome_categoria)
+    const searchTerm = additionalFilters?.nome_categoria; // Obtém o termo de busca
 
-    try {
-        // Execute a consulta com a cláusula WHERE combinada
-        const transacoes = await Transacao.findAll({
-            where: finalWhereClause, // Use a cláusula where combinada
-            // Ordena por data decrescente e depois por ID decrescente
-            order: [['data_transacao', 'DESC'], ['id_transacao', 'DESC']]
-             // Por padrão, findAll retorna todos os atributos, incluindo nome_subcategoria agora
+    if (searchTerm) {
+        console.log(`[listTransactions] Realizando busca priorizada para o termo: "${searchTerm}"`);
+        // Use iLike para busca case-insensitive "exata"
+        const lowerSearchTerm = searchTerm.toLowerCase();
+
+        // --- Busca Prioritária Sequencial ---
+
+        // 1. Tentar busca por termo exato (case-insensitive) em nome_categoria
+        console.log("[listTransactions] Tentativa 1: Buscar em nome_categoria...");
+        let results = await Transacao.findAll({
+            where: {
+                [Op.and]: [
+                    ...conditions, // Inclui as condições base (usuário, data, tipo)
+                    { nome_categoria: { [Op.iLike]: lowerSearchTerm } } // Busca case-insensitive exata
+                ]
+            },
+            order: standardOrder // Mantém a ordenação padrão para os resultados encontrados nesta etapa
         });
-        console.log(`[listTransactions] Consulta Sequelize executada. Retornou ${transacoes.length} transações.`);
-        return transacoes;
 
-    } catch (error) {
-        console.error("[listTransactions] Erro Sequelize durante a consulta:", error);
-        // Tenta extrair o SQL se disponível para debug
-        if (error.parent?.sql) { console.error("[listTransactions] SQL Gerado (aproximado):", error.parent.sql); }
-        else if (error.sql) { console.error("SQL Gerado:", error.sql); }
-        throw error; // Re-lança o erro para a camada superior (rota)
+        if (results.length > 0) {
+            console.log(`[listTransactions] Encontrado(s) ${results.length} resultado(s) em nome_categoria.`);
+            return results; // Retorna imediatamente os resultados da categoria principal
+        }
+
+        // 2. Se não encontrou em nome_categoria, tentar busca por termo exato (case-insensitive) em nome_subcategoria
+        console.log("[listTransactions] Tentativa 2: Buscar em nome_subcategoria...");
+        results = await Transacao.findAll({
+            where: {
+                 [Op.and]: [
+                    ...conditions, // Inclui as condições base
+                    { nome_subcategoria: { [Op.iLike]: lowerSearchTerm } } // Busca case-insensitive exata
+                ]
+            },
+             order: standardOrder
+        });
+
+        if (results.length > 0) {
+             console.log(`[listTransactions] Encontrado(s) ${results.length} resultado(s) em nome_subcategoria.`);
+            return results; // Retorna imediatamente os resultados da subcategoria
+        }
+
+        // 3. Se não encontrou em nome_categoria ou nome_subcategoria, tentar busca por termo exato (case-insensitive) em descricao
+        console.log("[listTransactions] Tentativa 3: Buscar em descricao...");
+        results = await Transacao.findAll({
+            where: {
+                 [Op.and]: [
+                    ...conditions, // Inclui as condições base
+                    { descricao: { [Op.iLike]: lowerSearchTerm } } // Busca case-insensitive exata
+                ]
+            },
+             order: standardOrder
+        });
+
+         if (results.length > 0) {
+             console.log(`[listTransactions] Encontrado(s) ${results.length} resultado(s) em descricao.`);
+             return results; // Retorna os resultados da descrição
+        } else {
+             console.log("[listTransactions] Nenhum resultado encontrado nas buscas prioritárias.");
+             return []; // Retorna um array vazio se não encontrou em nenhuma das etapas
+        }
+
+        // --- Fim Busca Prioritária Sequencial ---
+
+    } else {
+        // Nenhum termo de busca (nome_categoria) fornecido via additionalFilters.
+        // Executa a busca geral com base apenas nas outras condições (usuário, data, tipo).
+        console.log("[listTransactions] Nenhum termo de busca (nome_categoria) fornecido. Executando busca geral com filtros.");
+
+         // Combine as condições base coletadas (usuário, data, tipo)
+         const finalWhereClause = conditions.length > 0 ? { [Op.and]: conditions } : {};
+
+         const transacoes = await Transacao.findAll({
+            where: finalWhereClause,
+            order: standardOrder // Usa a ordenação padrão
+        });
+         console.log(`[listTransactions] Consulta geral executada. Retornou ${transacoes.length} transações.`);
+         return transacoes;
     }
+
+    // O bloco try/catch já envolve toda a lógica, erros serão capturados e relançados.
 };
+
 
 
 const getTransactionById = async (id_transacao) => {

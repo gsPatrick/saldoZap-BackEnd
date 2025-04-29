@@ -64,9 +64,9 @@ const sendWhatsAppReminder = async (alert) => {
     const descricao = alert.descricao || alert.nome_categoria || 'Item';
     const nomeUsuario = alert.usuario.nome ? `, ${alert.usuario.nome}` : '';
     if (alert.tipo === 'despesa') {
-        messageText = `Olá${nomeUsuario}! 👋\nLembrete de Pagamento Smart-Custo! ⏰\n\nSua conta de *${descricao}* no valor de *${valorFormatado}* vence *HOJE*! 🗓️\n\nCódigo para confirmação: ${alert.codigo_unico}`;
+        messageText = `Olá${nomeUsuario}! 👋\nLembrete de Pagamento Saldo Zap! ⏰\n\nSua conta de *${descricao}* no valor de *${valorFormatado}* vence *HOJE*! 🗓️\n\nCódigo para confirmação: ${alert.codigo_unico}`;
     } else if (alert.tipo === 'receita') {
-        messageText = `Olá${nomeUsuario}! 👋\nPrevisão de Recebimento Smart-Custo! 💰\n\nEstá previsto para você receber *${descricao}* no valor de *${valorFormatado}* *HOJE*! 🗓️\n\nCódigo para confirmação: ${alert.codigo_unico}`;
+        messageText = `Olá${nomeUsuario}! 👋\nPrevisão de Recebimento Saldo Zap! 💰\n\nEstá previsto para você receber *${descricao}* no valor de *${valorFormatado}* *HOJE*! 🗓️\n\nCódigo para confirmação: ${alert.codigo_unico}`;
     } else { /* ... */ return; }
     // --- Fim da Montagem da Mensagem ---
 

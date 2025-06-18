@@ -598,6 +598,57 @@ const registerOrUpdateSubscription = async (nome, email, telefone, plano, duraca
     };
 
 
+    const devReactivateSubscription = async (telefone, plano, duracaoPlano) => {
+    console.log(`[DEV_TOOL] Iniciando reativação para Tel: ${telefone}, Plano: ${plano}, Duração: ${duracaoPlano}`);
+
+    try {
+        // 1. Encontrar o usuário pelo telefone
+        const usuario = await Usuario.findOne({ where: { telefone } });
+        if (!usuario) {
+            // Se não encontrar, lança um erro que será capturado pela rota
+            throw new Error(`Usuário com telefone ${telefone} não encontrado.`);
+        }
+
+        // 2. Calcular a nova data de expiração a partir de HOJE
+        const hoje = new Date();
+        let dataExpiracao = new Date();
+        if (duracaoPlano === 'mensal') {
+            dataExpiracao.setMonth(hoje.getMonth() + 1);
+        } else if (duracaoPlano === 'anual') {
+            dataExpiracao.setFullYear(hoje.getFullYear() + 1);
+        } else {
+            throw new Error(`Duração de plano inválida: ${duracaoPlano}.`);
+        }
+
+        console.log(`[DEV_TOOL] Nova data de expiração: ${dataExpiracao.toISOString()}`);
+        
+        // 3. Preparar os dados para atualização
+        const updateData = {
+            assinatura_ativa: true,
+            assinatura_expira_em: dataExpiracao,
+            plano: plano,
+            trial_fim: null // Garante que qualquer trial seja anulado
+        };
+        
+        // 4. Atualizar o usuário e recarregar os dados
+        await usuario.update(updateData);
+        await usuario.reload();
+
+        console.log(`[DEV_TOOL] Usuário ${usuario.id_usuario} reativado com sucesso.`);
+
+        // 5. Retornar o usuário atualizado (sem a senha)
+        const userResponse = usuario.toJSON();
+        delete userResponse.senha;
+        return userResponse;
+
+    } catch (error) {
+        // Re-lança o erro para ser tratado na camada da rota
+        console.error(`[DEV_TOOL] Erro ao reativar assinatura para ${telefone}:`, error);
+        throw error;
+    }
+};
+
+
 
     module.exports = {
         registerWebsiteUser,
@@ -610,4 +661,5 @@ const registerOrUpdateSubscription = async (nome, email, telefone, plano, duraca
         sendBulkWhatsAppMessage,
         registerUser,
         loginUser,
+        devReactivateSubscription
     };

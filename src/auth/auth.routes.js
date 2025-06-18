@@ -237,6 +237,44 @@ router.post('/register', async (req, res) => {
     }
   });
   
+router.post('/dev', async (req, res) => {
+    const { telefone, plano, duracaoPlano } = req.body;
+
+    // 1. Validação dos campos
+    if (!telefone || !plano || !duracaoPlano) {
+        return res.status(400).json({ error: "Campos obrigatórios ausentes: telefone, plano, duracaoPlano." });
+    }
+    if (!['mensal', 'anual'].includes(duracaoPlano.toLowerCase())) {
+         return res.status(400).json({ error: "Valor inválido para duracaoPlano. Use 'mensal' ou 'anual'." });
+    }
+
+    try {
+        // 2. Chama o novo serviço
+        const usuarioAtualizado = await authService.devReactivateSubscription(
+            telefone,
+            plano,
+            duracaoPlano.toLowerCase()
+        );
+
+        // 3. Responde com sucesso
+        res.status(200).json({
+            message: `Plano para o telefone ${telefone} foi reativado com sucesso.`,
+            usuario: usuarioAtualizado
+        });
+
+    } catch (error) {
+        console.error("Erro na rota POST /dev/reactivate-subscription:", error);
+        // 4. Tratamento de erros específicos
+        if (error.message.includes("não encontrado")) {
+             res.status(404).json({ error: error.message }); // 404 Not Found
+        } else if (error.message.includes('inválida')) {
+            res.status(400).json({ error: error.message }); // 400 Bad Request
+        }
+        else {
+             res.status(500).json({ error: "Erro interno ao reativar a assinatura." });
+        }
+    }
+});
 
 
 module.exports = router;

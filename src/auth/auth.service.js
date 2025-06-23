@@ -1,13 +1,13 @@
-    // src/auth/auth.service.js
-    const Usuario = require('../usuarios/usuario.model');
-    const { Op, fn, col, literal } = require('sequelize'); // <<< NECESSÁRIO para a função
-    const axios = require('axios'); // <-- ADD THIS LINE
-    const bcrypt = require('bcrypt');
+// src/auth/auth.service.js
+const Usuario = require('../usuarios/usuario.model');
+const { Op, fn, col, literal } = require('sequelize'); // <<< NECESSÁRIO para a função
+const axios = require('axios'); // <-- ADD THIS LINE
+const bcrypt = require('bcrypt');
 const jwt = require('jsonwebtoken');
-    require('dotenv').config(); // Load .env variables
+require('dotenv').config(); // Load .env variables
 
 
-    const JWT_SECRET = process.env.JWT_SECRET;
+const JWT_SECRET = process.env.JWT_SECRET;
 const JWT_EXPIRES_IN = process.env.JWT_EXPIRES_IN || '1d'; // Default expiration
 
 if (!JWT_SECRET) {
@@ -316,7 +316,6 @@ const registerOrUpdateSubscription = async (nome, email, telefone, plano, duraca
             isNewUser = false;
             console.log(`[Subscription] Usuário ${usuario.id_usuario} encontrado. Atualizando APENAS dados da assinatura...`);
 
-            // <<< MUDANÇA PRINCIPAL: Objeto de atualização contém APENAS dados da assinatura >>>
             const subscriptionUpdateData = {
                 assinatura_ativa: true,
                 assinatura_expira_em: dataExpiracao,
@@ -324,7 +323,6 @@ const registerOrUpdateSubscription = async (nome, email, telefone, plano, duraca
                 trial_fim: null // Anula o trial ao ativar uma assinatura
             };
 
-            // Atualiza o usuário com o objeto restrito
             await usuario.update(subscriptionUpdateData);
             
         } else {
@@ -332,23 +330,38 @@ const registerOrUpdateSubscription = async (nome, email, telefone, plano, duraca
             isNewUser = true;
             console.log(`[Subscription] Usuário não encontrado para tel ${telefone}. Criando novo...`);
 
-            // <<< MUDANÇA PRINCIPAL: Objeto de criação contém TODOS os dados da requisição >>>
             const newUser_Data = {
                 nome: nome,
                 email: email,
-                telefone: telefone, // Telefone é necessário para criar
+                telefone: telefone,
                 assinatura_ativa: true,
                 assinatura_expira_em: dataExpiracao,
                 plano: plano,
-                trial_fim: null
+                trial_fim: null // Garante que não haja trial ao criar com assinatura
             };
 
-            // <<< MUDANÇA: Remoção da verificação de email duplicado >>>
             usuario = await Usuario.create(newUser_Data);
             console.log(`[Subscription] Novo usuário ${usuario.id_usuario} criado com sucesso.`);
         }
         
-        // Recarrega o estado do usuário do banco para garantir que temos os dados mais recentes
+        // --- INÍCIO DA MODIFICAÇÃO/REFORÇO ---
+        // Se o usuário foi encontrado ou criado e a operação principal (update/create) foi concluída:
+        if (usuario) { 
+            // Garantia adicional: se a assinatura está ativa, o trial_fim DEVE ser null.
+            // Isso reforça a lógica que já define trial_fim: null nos objetos de dados.
+            // Usamos .assinatura_ativa e .trial_fim diretamente pois 'usuario' é uma instância Sequelize.
+            if (usuario.assinatura_ativa === true && usuario.trial_fim !== null) {
+                console.warn(`[Subscription] Garantia Adicional: Usuário ${usuario.id_usuario} com assinatura ativa, mas trial_fim (${usuario.trial_fim}) não era nulo. Corrigindo para null.`);
+                usuario.trial_fim = null; // Modifica a instância em memória
+                await usuario.save({ fields: ['trial_fim'] }); // Salva apenas o campo trial_fim no banco
+            }
+        }
+        // --- FIM DA MODIFICAÇÃO/REFORÇO ---
+        
+        // Recarrega o estado do usuário do banco para garantir que temos os dados mais recentes.
+        // Se usuario.save() foi chamado acima, o objeto 'usuario' já está atualizado em memória
+        // com o novo trial_fim. O reload garante consistência com o banco caso haja triggers ou
+        // outros efeitos colaterais (embora improvável para esta alteração específica).
         await usuario.reload();
 
         // Remove a senha do objeto de retorno por segurança
@@ -363,11 +376,10 @@ const registerOrUpdateSubscription = async (nome, email, telefone, plano, duraca
             const messages = error.errors.map(e => e.message).join(', ');
             throw new Error(`Erro de validação: ${messages}`);
         }
-        // O erro de constraint agora só pode vir do telefone, se houver
         if (error.name === 'SequelizeUniqueConstraintError') {
             throw new Error(`Erro: Já existe um usuário com este telefone.`);
         }
-        throw error; // Re-lança outros erros (como o de duração inválida)
+        throw error;
     }
 };
 

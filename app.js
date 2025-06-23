@@ -32,7 +32,7 @@ const syncDatabase = async () => {
         // >>>>> PONTO CRÍTICO: `force: true` apaga tudo! <<<<<
         // Mude para `force: false` ou remova a opção `force` para produção segura
         // ou use `alter: true` para tentar aplicar alterações (também arriscado sem migrações).
-        await sequelize.sync({ force: false });
+        await sequelize.sync({ force: true });
         // >>>>> --------------------------------------- <<<<<
 
         console.log('Banco de dados sincronizado com sucesso. (Tabelas recriadas!)');
@@ -65,6 +65,7 @@ const Usuario = require('./src/usuarios/usuario.model'); // Importar para teste
 app.get('/api/v1/test-db-connection', async (req, res) => {
     try {
         await sequelize.authenticate(); // Testa a conexão básica
+        await force ()
         // Tenta buscar um usuário para verificar se a tabela existe após sync
         const users = await Usuario.findAll({ limit: 1 });
         res.json({ success: true, message: 'Database connection OK and User table seems OK.', users: users });

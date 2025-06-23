@@ -14,7 +14,7 @@ const alertaPagamentoRoutes = require('./src/alertas-pagamento/alerta-pagamento.
 const recorrenciaRoutes = require('./src/recorrencias/recorrencia.routes');
 const authRoutes = require('./src/auth/auth.routes');
 const alertScheduler = require('./src/jobs/alertScheduler'); // <<< Importar o agendador
-
+const webhookRoutes = require('./src/webhooks/webhook.routes');
 
 // --- Importar Rotas ---
 
@@ -56,6 +56,8 @@ app.use('/api/v1/tags', tagRoutes);
 // A rota '/api/v1/alertas' estava duplicada, removi uma. Use '/alertas-pagamento'
 app.use('/api/v1/alertas-pagamento', alertaPagamentoRoutes);
 app.use('/api/v1/recorrencias', recorrenciaRoutes);
+app.use('/api/v1/webhooks', webhookRoutes); // <<< ADICIONAR ESTA LINHA
+
 // app.use('/api/v1/alertas', alertaPagamentoRoutes); // Rota duplicada, remover.
 
 

@@ -1,10 +1,10 @@
-
 // src/app.js
 const express = require('express');
 const bodyParser = require('body-parser');
 const cors = require('cors');
 require('dotenv').config();
 const sequelize = require('./src/config/database');
+const bcrypt = require('bcrypt'); // <<< 1. IMPORTAR BCRYPT
 
 const usuarioRoutes = require('./src/usuarios/usuario.routes');
 const transacaoRoutes = require('./src/transacoes/transacao.routes');
@@ -13,10 +13,8 @@ const tagRoutes = require('./src/tags/tag.routes');
 const alertaPagamentoRoutes = require('./src/alertas-pagamento/alerta-pagamento.routes');
 const recorrenciaRoutes = require('./src/recorrencias/recorrencia.routes');
 const authRoutes = require('./src/auth/auth.routes');
-const alertScheduler = require('./src/jobs/alertScheduler'); // <<< Importar o agendador
+const alertScheduler = require('./src/jobs/alertScheduler');
 const webhookRoutes = require('./src/webhooks/webhook.routes');
-
-// --- Importar Rotas ---
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -28,47 +26,67 @@ app.use(bodyParser.json());
 const syncDatabase = async () => {
     try {
         console.log('Iniciando sincronização com o banco de dados...');
-
-        // >>>>> PONTO CRÍTICO: `force: true` apaga tudo! <<<<<
-        // Mude para `force: false` ou remova a opção `force` para produção segura
-        // ou use `alter: true` para tentar aplicar alterações (também arriscado sem migrações).
-        await sequelize.sync({ force: true });
-        // >>>>> --------------------------------------- <<<<<
-
+        // Em desenvolvimento, force: true pode ser útil.
+        // Para produção, mude para force: false ou use migrações.
+        await sequelize.sync({ force: true }); 
         console.log('Banco de dados sincronizado com sucesso. (Tabelas recriadas!)');
-
     } catch (error) {
         console.error('Erro ao sincronizar o banco de dados:', error);
-        // Considerar encerrar a aplicação se a sincronização falhar criticamente
         process.exit(1);
     }
 };
-// ----------------------------------------------------
 
+// <<< 2. FUNÇÃO PARA CRIAR O ADMIN SE NÃO EXISTIR >>>
+const createAdminUserIfNotExists = async () => {
+    const Usuario = require('./src/usuarios/usuario.model'); // Importa o modelo aqui dentro
+    const adminEmail = 'admin@gmail.com';
+    const adminPassword = 'senhadoadmin';
+
+    try {
+        const adminExists = await Usuario.findOne({ where: { email: adminEmail } });
+
+        if (!adminExists) {
+            console.log('Usuário admin não encontrado. Criando...');
+            
+            // Criptografar a senha
+            const salt = await bcrypt.genSalt(10);
+            const hashedPassword = await bcrypt.hash(adminPassword, salt);
+            
+            // Criar o usuário
+            await Usuario.create({
+                nome: 'Administrador',
+                email: adminEmail,
+                senha: hashedPassword,
+                telefone: '00000000000', // Telefone é obrigatório e único, use um placeholder
+                assinatura_ativa: true,
+                plano: 'Admin Vitalicio',
+                assinatura_expira_em: null // Nunca expira
+            });
+            console.log('Usuário admin criado com sucesso!');
+        } else {
+            console.log('Usuário admin já existe no banco de dados.');
+        }
+    } catch (error) {
+        console.error('ERRO AO TENTAR CRIAR USUÁRIO ADMIN:', error);
+    }
+};
+// <<< FIM DA FUNÇÃO ADMIN >>>
 
 // --- Rotas da API Versionadas (V1) ---
-// Certifique-se de que os caminhos estão corretos
 app.use('/api/v1/auth', authRoutes);
 app.use('/api/v1/usuarios', usuarioRoutes);
 app.use('/api/v1/transacoes', transacaoRoutes);
 app.use('/api/v1/categorias', categoriaRoutes);
 app.use('/api/v1/tags', tagRoutes);
-// A rota '/api/v1/alertas' estava duplicada, removi uma. Use '/alertas-pagamento'
 app.use('/api/v1/alertas-pagamento', alertaPagamentoRoutes);
 app.use('/api/v1/recorrencias', recorrenciaRoutes);
-app.use('/api/v1/webhooks', webhookRoutes); // <<< ADICIONAR ESTA LINHA
+app.use('/api/v1/webhooks', webhookRoutes);
 
-// app.use('/api/v1/alertas', alertaPagamentoRoutes); // Rota duplicada, remover.
-
-
-// Rota de Teste de Conexão (Opcional, mas útil após sync)
-// Precisa importar Usuario se for usar aqui
-const Usuario = require('./src/usuarios/usuario.model'); // Importar para teste
+// Rota de Teste de Conexão
+const Usuario = require('./src/usuarios/usuario.model');
 app.get('/api/v1/test-db-connection', async (req, res) => {
     try {
-        await sequelize.authenticate(); // Testa a conexão básica
-        await force ()
-        // Tenta buscar um usuário para verificar se a tabela existe após sync
+        await sequelize.authenticate();
         const users = await Usuario.findAll({ limit: 1 });
         res.json({ success: true, message: 'Database connection OK and User table seems OK.', users: users });
     } catch (error) {
@@ -77,36 +95,32 @@ app.get('/api/v1/test-db-connection', async (req, res) => {
     }
 });
 
-
 // Rota Raiz da API V1
 app.get('/api/v1', (req, res) => {
-    res.send('API Smart-Custo V1 está rodando!');
+    res.send('API Saldo Zap V1 está rodando!');
 });
-
 
 // --- Inicialização do Servidor ---
 const startServer = async () => {
     // 1. Sincroniza o banco
     await syncDatabase();
 
+    // <<< 3. CHAMA A FUNÇÃO DE CRIAÇÃO DO ADMIN >>>
+    await createAdminUserIfNotExists();
+
     // 2. Inicia o servidor Express
     app.listen(PORT, () => {
-        console.log(`API Smart-Custo rodando na porta ${PORT}`);
+        console.log(`API Saldo Zap rodando na porta ${PORT}`);
 
-        // <<< PASSO 3: INICIA O AGENDADOR DEPOIS QUE O SERVIDOR ESTÁ RODANDO >>>
+        // 3. Inicia o agendador de alertas
         try {
             console.log('Iniciando o agendador de alertas...');
-            alertScheduler.scheduleTask(); // <<< CHAMADA DA FUNÇÃO
-            // O log de agendamento ("[AlertScheduler] Agendando envio...") deve aparecer depois desta linha
+            alertScheduler.scheduleTask();
         } catch (schedulerError) {
             console.error('Erro ao iniciar o agendador de alertas:', schedulerError);
-            // Decida se a API deve parar se o scheduler falhar ao iniciar
         }
-        // <<< FIM DA INICIALIZAÇÃO DO AGENDADOR >>>
-
     });
 };
 
 // Chama a função para iniciar tudo
 startServer();
-// ---------------------------------

@@ -42,10 +42,10 @@ const processIntent = async (userMessage, userId) => {
             break;
 
         case 'QUERY_TRANSACTIONS':
-            // A entidade 'type' é crucial aqui para formatar a resposta corretamente
-            const transactionType = entities.type || 'despesa'; // Assume despesa se não especificado
+            const transactionType = entities.type || 'despesa';
             resultData = await actionHandler.handleQueryTransactions(userId, entities);
-            finalResponse = responseFormatter.formatTransactionList(resultData, transactionType);
+            // Passa a categoria da entidade para o formatador saber o título
+            finalResponse = responseFormatter.formatTransactionList(resultData, transactionType, entities.category);
             break;
 
         case 'QUERY_ALERTS':

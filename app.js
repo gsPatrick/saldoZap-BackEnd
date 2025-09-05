@@ -28,7 +28,7 @@ const syncDatabase = async () => {
         console.log('Iniciando sincronização com o banco de dados...');
         // Em desenvolvimento, force: true pode ser útil.
         // Para produção, mude para force: false ou use migrações.
-        await sequelize.sync({ force: true }); 
+        await sequelize.sync({ force: false }); 
         console.log('Banco de dados sincronizado com sucesso. (Tabelas recriadas!)');
     } catch (error) {
         console.error('Erro ao sincronizar o banco de dados:', error);

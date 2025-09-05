@@ -132,6 +132,33 @@ const handleDeleteItem = async (userId, entities) => {
     }
 };
 
+
+// <<< ADICIONADO: Handler para criar recorrências >>>
+/**
+ * Lida com a criação de uma transação recorrente.
+ * @param {number} userId - O ID do usuário.
+ * @param {object} entities - As entidades extraídas pela IA.
+ * @returns {Promise<object>} O resultado da criação da recorrência.
+ */
+const handleCreateRecurrence = async (userId, entities) => {
+    console.log('[Action Handler] Executando: handleCreateRecurrence');
+    // A IA deve fornecer a maioria dos dados. Definimos padrões para o que pode faltar.
+    const hoje = new Date();
+    return await recorrenciaService.createRecurrence(
+        userId,
+        entities.type || 'despesa',
+        entities.value,
+        entities.category, // nome_categoria
+        null, // origem (não usado pela IA por enquanto)
+        new Date().toISOString().split('T')[0], // data_inicio (sempre começa hoje)
+        entities.frequency,
+        entities.day_of_month || hoje.getDate(), // dia_mes
+        entities.day_of_week, // dia_semana
+        1, // intervalo (sempre 1 por enquanto)
+        entities.end_date, // data_fim_recorrencia
+        entities.description
+    );
+};
 // Adicione aqui o handleCreateRecurrence se necessário
 
 module.exports = {
@@ -142,4 +169,5 @@ module.exports = {
     handleQueryBalance,
     handleConfirmPayment,
     handleDeleteItem,
+    handleCreateRecurrence
 };

@@ -194,6 +194,86 @@ const formatPaymentConfirmation = (alertData) => {
 };
 
 
+// <<< ADICIONADO: Formatador para sucesso de Recorrência >>>
+/**
+ * Formata a mensagem de sucesso para uma recorrência recém-criada.
+ * @param {object} recurrenceData - O objeto da recorrência.
+ * @returns {string} A mensagem formatada.
+ */
+const formatRecurrenceSuccess = (recurrenceData) => {
+    const isExpense = recurrenceData.tipo === 'despesa';
+    const title = isExpense ? '🔄 *Recorrência de Despesa Criada!*' : '🔄 *Recorrência de Receita Criada!*';
+    const icon = isExpense ? '💸' : '💰';
+    const description = recurrenceData.descricao || 'Recorrência';
+
+    let frequencyDetails = '';
+    switch (recurrenceData.frequencia) {
+        case 'mensal':
+            frequencyDetails = `Todo dia ${recurrenceData.dia_mes}`;
+            break;
+        case 'semanal':
+            frequencyDetails = `Toda ${recurrenceData.dia_semana}`;
+            break;
+        case 'anual':
+            frequencyDetails = `Anualmente`;
+            break;
+        default:
+            frequencyDetails = recurrenceData.frequencia;
+    }
+
+    return `
+${title}
+
+*${description}*
+${icon} Valor: ${formatCurrency(recurrenceData.valor)}
+🏷️ Cat: _${recurrenceData.nome_categoria || 'Não definida'}_
+
+🗓️ *Detalhes da Recorrência:*
+  - Frequência: ${frequencyDetails}
+  - Início: ${formatDate(recurrenceData.data_inicio)}
+  - Fim: ${recurrenceData.data_fim_recorrencia ? formatDate(recurrenceData.data_fim_recorrencia) : 'Contínuo'}
+    `.trim();
+};
+
+// <<< ADICIONADO: Formatadores para Onboarding >>>
+/**
+ * Formata a mensagem pedindo o e-mail para um novo usuário.
+ * @returns {string} A mensagem formatada.
+ */
+const formatOnboardingEmailRequest = () => {
+    return `
+👋 Olá! Seja bem-vindo(a) ao Saldo Zap!
+
+Notei que este é seu primeiro acesso. Para começar a usar todos os recursos, por favor, me informe o seu melhor e-mail.
+    `.trim();
+};
+
+/**
+ * Formata a mensagem de boas-vindas completa após o e-mail ser associado.
+ * @returns {string} A mensagem de tutorial.
+ */
+const formatOnboardingWelcome = () => {
+    return `
+✅ E-mail associado com sucesso!
+
+Eu sou o Saldo Zap, seu assistente financeiro direto no WhatsApp. Comigo, você pode registrar seus ganhos e gastos de forma rápida e simples, direto na conversa.
+
+*Como funciona:*
+✍️ Para registrar algo, basta me dizer o que aconteceu.
+*Ex:* "Gastei 25 reais com lanche hoje"
+*Ex:* "Recebi 1200 do freela"
+
+⏰ Crie lembretes para não esquecer suas contas.
+*Ex:* "Me lembre de pagar a conta de luz de R$ 150 amanhã"
+
+🔄 Crie transações recorrentes.
+*Ex:* "Assinatura da Netflix, 55 reais todo mês"
+
+*O que você gostaria de fazer agora?*
+    `.trim();
+};
+
+
 module.exports = {
     formatTransactionSuccess,
     formatAlertSuccess,
@@ -202,5 +282,8 @@ module.exports = {
     formatAlertList,
     formatDeletionSuccess,
     formatItemNotFound,
-    formatPaymentConfirmation
+    formatPaymentConfirmation,
+        formatRecurrenceSuccess,      // <<< ADICIONADO
+    formatOnboardingEmailRequest, // <<< ADICIONADO
+    formatOnboardingWelcome,      // <<< ADICIONADO
 };

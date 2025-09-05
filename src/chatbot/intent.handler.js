@@ -74,6 +74,12 @@ const processIntent = async (userMessage, userId) => {
             }
             break;
 
+                    // <<< ADICIONADO: Caso para criar recorrências >>>
+        case 'CREATE_RECURRENCE':
+            resultData = await actionHandler.handleCreateRecurrence(userId, entities);
+            finalResponse = responseFormatter.formatRecurrenceSuccess(resultData);
+            break;
+
         case 'GENERAL_CONVERSATION':
             // Para conversas gerais, podemos ter respostas pré-definidas ou até chamar a IA novamente para gerar uma resposta conversacional
             // Por enquanto, vamos usar uma resposta padrão.
